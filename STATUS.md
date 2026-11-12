@@ -13,29 +13,29 @@ Update this file after each feature. Record changes and verification in [RECORD_
 | Calls | 07 | Call completion and call log | Implemented |
 | Billing | 08 | Idempotent per-call qualification and charge recording | Implemented |
 | Site rentals | 09 | Renter portal with scoped call and charge history | Implemented |
-| Foundation | 10 | Production identity, roles, and tenant isolation | Pending |
+| Foundation | 10 | Workspace sign-in, roles, and tenant isolation | Implemented and tested locally |
 | Calls | 11 | Carrier number provisioning | Pending |
-| Calls | 12 | Live forwarding and authenticated carrier callbacks | Pending |
+| Calls | 12 | Live forwarding and authenticated carrier callbacks | Implemented locally; carrier acceptance pending |
 | Calls | 13 | Number porting | Pending |
 | Attribution | 14 | Dynamic number insertion | Pending |
-| Attribution | 15 | Visitor and campaign attribution | Pending |
+| Attribution | 15 | Visitor and campaign attribution | Tracking-number source mapping implemented; visitor attribution pending |
 | Calls | 16 | IVR builder | Pending |
 | Calls | 17 | Fallback and ring-tree routing | Pending |
 | Calls | 18 | Recording and consent settings | Pending |
 | Calls | 19 | Browser callbacks | Pending |
 | Calls | 20 | Inbound SMS | Pending |
-| Billing | 21 | Recurring and hybrid rent | Pending |
+| Billing | 21 | Recurring and hybrid rent | Local monthly rate schedules and invoice generation implemented |
 | Billing | 22 | Verified booking-based charges | Pending |
-| Billing | 23 | Invoice generation and delivery | Pending |
-| Billing | 24 | Payment reconciliation and dispute adjustments | Pending |
-| Network | 25 | Buyer contracts and portal | Pending |
-| Network | 26 | Buyer coverage, caps and concurrency limits | Pending |
-| Network | 27 | Publisher offers and portal | Pending |
-| Network | 28 | Publisher payout ledger and statements | Pending |
-| Network | 29 | Buyer ping/post and live bidding | Pending |
-| Network | 30 | Publisher-side ping/post | Pending |
-| Network | 31 | Predictive routing | Pending |
-| Network | 32 | Traffic quality and suppression rules | Pending |
+| Billing | 23 | Invoice generation and delivery | Local per-call invoices implemented; external delivery pending |
+| Billing | 24 | Payment reconciliation and dispute adjustments | Local payment and credit entries implemented; dispute workflow pending |
+| Network | 25 | Buyer contracts and portal | Implemented locally |
+| Network | 26 | Buyer coverage, caps and concurrency limits | Implemented for simulated calls |
+| Network | 27 | Publisher offers and portal | Implemented locally |
+| Network | 28 | Publisher payout ledger and statements | Local accrual and statements implemented; disbursement deferred |
+| Network | 29 | Buyer ping/post and live bidding | Local bids and floors implemented; external buyer responses deferred |
+| Network | 30 | Publisher-side ping/post | Local authenticated endpoints implemented |
+| Network | 31 | Predictive routing | Local historical revenue ranking implemented |
+| Network | 32 | Traffic quality and suppression rules | Duplicate references and regional suppression implemented locally |
 | Leads | 33 | Web form lead intake | Pending |
 | Leads | 34 | Chat lead intake | Pending |
 | Leads | 35 | Validation and deduplication | Pending |

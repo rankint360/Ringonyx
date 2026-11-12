@@ -32,4 +32,6 @@ table { width: 100%; border-collapse: collapse; text-align: left; }
 th, td { padding: 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 th { color: var(--mist); font-size: 13px; }
 td:first-child, td:nth-last-child(-n+2) { font-family: var(--mono); }
-#key { max-width: 280px; }
+.sign-in { max-width: 420px; }
+.workspace-header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.workspace-header p, section > p > small { color: var(--mist); }

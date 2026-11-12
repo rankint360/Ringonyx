@@ -20,4 +20,16 @@
 
 | 2026-11-11 | 51a | Applied the dark graphite and electric lime identity, introduced the cut-corner waveform mark, and exported updated PNG logos, favicons, social graphics, feature icons, and a design system reference. | Verified the refreshed homepage in the browser and checked the PNG export sizes. |
 
+| 2026-11-11 | 10 | Added workspace provisioning, password sign-in, expiring sessions, owner/operator/viewer roles, account-scoped rental data, and assignment history. | Integration tests cover workspace isolation, viewer restrictions, sign-out, and renter handoff. |
+
+| 2026-11-11 | 12, 15 | Added signed Twilio inbound forwarding and completion callbacks, plus workspace-scoped tracking-number source mapping. | Local integration tests cover signed requests, retries, and charge qualification. Live carrier acceptance remains pending. |
+
+| 2026-11-11 | 23 | Added local invoice generation for unbilled qualified calls, with operator and renter views. External integrations deferred. | Integration checks cover tenant isolation, duplicate billing, and renter visibility. |
+
+| 2026-11-11 | 24 | Added local payment and credit entries with balance updates in the operator and renter views. | Integration checks cover duplicate references, workspace isolation, viewer restrictions, and overpayments. |
+
+| 2026-11-11 | 21 | Added effective monthly rent rates and month-specific invoices that combine rent with unbilled qualified calls. | Integration checks cover tenant isolation, duplicate rent prevention, and ending rent with a zero rate. |
+
+| 2026-11-11 | 25–32 | Built the local buyer and publisher console, partner statements, capacity-aware bidding, authenticated publisher ping/post, historical ranking, and suppression. | Integration tests exercised bid preview, capacity, duplicate submission, settlement, payout visibility, and workspace isolation. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.
