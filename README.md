@@ -9,3 +9,5 @@ Requires Node.js 24 or later. From this directory run `npm start`, then open htt
 Add a tracking site and two renters. Assign the first renter with a charge in cents and minimum talk time. Simulate an arrival, reassign the site, then complete the call. Open each renter portal to inspect the allocation and charges. Simulate another call to confirm the new destination.
 
 This local application simulates carrier events and displays accumulated charges. Real call connectivity, invoice issuance, production authentication, and the other features listed in STATUS.md are pending. Renter links are bearer credentials in this prototype.
+
+The product homepage is at `/` and the operator console is at `/app`. The homepage demo uses sample data and does not change the console database.

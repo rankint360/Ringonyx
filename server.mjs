@@ -131,7 +131,15 @@ function complete(id, data) {
   });
 }
 const assets = {
-  '/': ['index.html', 'text/html'],
+  '/': ['home.html', 'text/html'],
+  '/home.css': ['home.css', 'text/css'],
+  '/home.js': ['home.js', 'text/javascript'],
+  '/ringonyx-mark.svg': ['ringonyx-mark.svg', 'image/svg+xml'],
+  '/ringonyx-icons.svg': ['ringonyx-icons.svg', 'image/svg+xml'],
+  '/brand.css': ['brand.css', 'text/css'],
+  '/brand/favicons/favicon-32.png': ['brand/favicons/favicon-32.png', 'image/png'],
+  '/brand/favicons/favicon-180.png': ['brand/favicons/favicon-180.png', 'image/png'],
+  '/app': ['index.html', 'text/html'],
   '/portal': ['index.html', 'text/html'],
   '/app.js': ['app.js', 'text/javascript'],
   '/style.css': ['style.css', 'text/css']

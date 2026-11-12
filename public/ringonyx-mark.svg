@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <title>Ringonyx</title>
+  <path fill="#C6FF38" d="M15 3h18l12 12v18L33 45H15L3 33V15Z"/>
+  <path fill="none" stroke="#0B0E12" stroke-width="3.5" stroke-linecap="square" stroke-linejoin="bevel" d="M32 13H18l-6 6v10l6 6h13l5-5M12 24h10l4-6 5 10 5-5"/>
+</svg>
