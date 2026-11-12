@@ -45,3 +45,35 @@ Sign in and open `/network`. Add a buyer contract and publisher offer, preview a
 The local publisher endpoints are `POST /api/publisher/ping` and `POST /api/publisher/post`. Use the offer’s publisher API token as a Bearer credential. Send a two-letter `region` and optionally a bid `floor` in cents and a `strategy` of `price` or `predictive`. Include a stable `reference` for post. Ping is a preview. Post evaluates current capacity and reserves a slot if a buyer qualifies. The operator must settle simulated calls to release their slots. Buyer bids use contract prices, and caps reset by UTC day. Partner portal links use separate credentials.
 
 Network calls are simulated. Live buyer bid requests, carrier routing for network calls, and payout transfers are deferred.
+
+## Web lead intake and delivery
+
+Open **Web leads** in the operator console. Each tracking site has hosted inquiry and chat message links. Add `utm_source` and `utm_campaign` to a link to capture campaign attribution. Chat intake accepts an asynchronous message and contact details. A matching email or phone number on the same site within 24 hours reuses the original lead.
+
+Deliver a lead directly to a buyer or request a quote and accept it within five minutes. Local quotes use buyer contract prices. Delivery checks coverage, buyer pause state, and regional suppression. A lead can be delivered once, and a buyer can view their delivered leads in their portal. The operator report counts calls, form leads, and chat leads by source.
+
+External chat providers and buyer delivery endpoints remain deferred.
+
+## Analytics and conversation review
+
+Open **Analytics** to compare calls, form leads, and chat leads by campaign, and to review renter invoice and network settlement totals. Select an answered call and paste its transcript. Use a `Caller:` prefix for caller lines so the preview can flag booking intent. Edit the excerpt and coaching note, choose a qualification outcome, and save the review. Verified bookings come from billing records.
+
+Configure an answering profile for a site and enter a sample message to test the booking, escalation, or fallback response. The local preview uses keyword rules. Audio transcription, model-backed analysis, and live answering remain deferred.
+
+## Local operations
+
+Open **Operations** for CRM contacts and conversion CSV exports, service health, and recent successful changes. Workspace owners can import up to 100 tracking sites from a CSV with a `name,number` header, customize the name and accent on renter and partner portals, and issue or revoke read-only developer keys.
+
+Send the developer key as a Bearer token to `/api/v1/sites` or `/api/v1/campaigns`, according to its scope. To use the local MCP bridge, run `node mcp.mjs` as a stdio server with `RINGONYX_DEVELOPER_TOKEN` and the loopback `RINGONYX_API_ORIGIN` in its environment. The bridge supports MCP protocol version `2025-11-25` and exposes only the token's read scope.
+
+Owners can generate a signing key and sign an audit event or sample event. Verify the hex signature with HMAC-SHA256 over the timestamp, a period, and the exact JSON payload. Delivery to an external endpoint remains deferred.
+
+Run `node server.mjs --backup path/to/new-backup.sqlite` from the server directory to take a consistent snapshot of the entire database. Use the same `RINGONYX_DB` value as the running server if configured. The snapshot includes every workspace and must be stored with the same access controls as the source database.
+
+## Release and recovery
+
+1. Run `npm test` on Node.js 24 or later. The suite exercises workspace access, call and lead processing, billing, analytics, operations, and recovery from a SQLite snapshot.
+2. For staging, set `NODE_ENV=production`, `RINGONYX_DB` to an absolute path on persistent storage, and `PORT` to the loopback port the HTTPS reverse proxy forwards to. Create the database parent directory, provision a staging owner using the commands above, and start `npm start` under the host's service manager.
+3. Confirm `GET /health` returns `{"status":"ok"}` through the proxy. Open the homepage and `/app`, sign in, and verify the session cookie is Secure. With test data, simulate a call, complete it, check its invoice totals, and submit a form lead through its public intake link. Confirm that the intended renter or buyer sees the relevant records in their portal.
+4. Before an upgrade, save a snapshot to a fresh path. For a restore drill, copy the snapshot to a separate writable path, point a second server at the copy on another port, sign in, and verify site, call, and billing records. For rollback, stop the service and switch to the compatible source revision and verified snapshot before restarting. Keep the pre-rollback database for reconciliation of any writes made after the snapshot.
+5. After staging passes, verify the configured live providers with test accounts and test traffic before opening public access. Record the deployed revision, smoke-test results, and launch decision in the Record Register.

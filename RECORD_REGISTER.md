@@ -56,4 +56,12 @@
 
 | 2026-11-12 | 25–32 | Completed local network acceptance and added partner pause controls, routing decision logs, and stable responses to retried call submissions. | Browser checks confirmed pausing and resuming a buyer, call settlement, and separate buyer and publisher statements. Integration tests confirmed workspace isolation, capacity limits, and retry handling. |
 
+| 2026-11-12 | 33–37 | Built hosted form and chat message intake, contact validation, deduplication, direct and quoted delivery, buyer inboxes, and source reporting across calls and web leads. | Browser acceptance covered public intake through quote acceptance and buyer receipt. Integration tests covered both channels and delivery modes, buyer pauses, bid floors, repeat requests, and workspace isolation. |
+
+| 2026-11-12 | 38–42 | Added transcript review, rule-based booking signals and coaching, answering profile simulation, and campaign and financial reports. | Browser acceptance covered transcript preview and saving, answering simulation, and campaign charge totals. Integration tests covered qualification, verified bookings, invoice and network totals, and workspace isolation. |
+
+| 2026-11-12 | 43–51 | Added signed event previews, CSV exports and site migration, scoped developer access, local MCP resources, portal branding, audit history, health checks, and SQLite snapshots. | Integration tests verified migration rollback, token scope and revocation, MCP resource contents, signatures, branding, audit isolation, health, and backup integrity. |
+
+| 2026-11-12 | 52–55 | Prepared the release source and documented staging, acceptance, recovery, and rollback. Hardened SQLite snapshots against missing sources and destination collisions. | All three integration tests passed. A fresh production-mode server started from a snapshot and returned the original site and call records after owner login. Hosted staging, live provider acceptance, and launch remain deferred. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { test } from 'node:test';
 
 test('workspace sessions isolate reads, writes, assignments, and call completion', async t => {
@@ -264,8 +265,140 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   assert.equal(numberRequests.find(row => row.id === port.id).requested, number);
   assert.deepEqual((await api('communications', { cookie: other })).data,
     { recordings: [], callbacks: [], messages: [], numberRequests: [] });
+  const formLead = { channel: 'form', name: 'Web contact', email: 'WEB@example.test',
+    region: 'AZ', source: 'Search', campaign: 'Repair', message: 'Request a quote' };
+  const captured = await api('intake/' + site.id, { body: formLead, status: 202 });
+  assert.deepEqual(captured.data, { received: true });
+  assert.equal((await post(owner, 'leads/capture', { ...formLead, site: site.id, email: 'web@example.test', channel: 'chat' }, 200)).duplicate, true);
+  await post(owner, 'leads/capture', { ...formLead, site: site.id, email: 'bad' }, 400);
+  const chat = await post(owner, 'leads/capture', {
+    ...formLead, site: site.id, channel: 'chat', email: '', phone: '+16025550115', name: 'Chat contact'
+  }, 200);
+  const leadBoard = (await api('leads', { cookie: owner })).data;
+  assert.equal(leadBoard.leads.length, 2);
+  assert.ok(leadBoard.callSources.length);
+  const web = leadBoard.leads.find(row => row.channel === 'form');
+  assert.equal(web.campaign, 'Repair');
+  await post(other, 'leads/direct', { lead: web.id, buyer: buyer.id }, 404);
+  await post(viewer, 'leads/direct', { lead: web.id, buyer: buyer.id }, 403);
+  const direct = await post(owner, 'leads/direct', { lead: web.id, buyer: buyer.id }, 200);
+  assert.deepEqual(await post(owner, 'leads/direct', { lead: web.id, buyer: buyer.id }, 200), direct);
+  assert.equal((await post(owner, 'leads/ping', { lead: chat.id, floor: 6001 }, 200)).quote, null);
+  const quote = await post(owner, 'leads/ping', { lead: chat.id, floor: 5500 }, 200);
+  assert.equal(quote.cents, 6000);
+  await post(owner, 'network/pause', { kind: 'buyer', party: buyer.id, paused: true }, 200);
+  await post(owner, 'leads/post', { lead: chat.id, quote: quote.quote }, 409);
+  await post(owner, 'network/pause', { kind: 'buyer', party: buyer.id, paused: false }, 200);
+  const delivered = await post(owner, 'leads/post', { lead: chat.id, quote: quote.quote }, 200);
+  assert.deepEqual(await post(owner, 'leads/post', { lead: chat.id, quote: quote.quote }, 200), delivered);
+  await post(owner, 'leads/direct', { lead: chat.id, buyer: buyer.id }, 409);
+  const inbox = (await api('network-portal/buyer/' + network.buyers[0].token)).data.leads;
+  assert.deepEqual(inbox.map(row => row.channel).sort(), ['chat', 'form']);
+  assert.deepEqual((await api('leads', { cookie: other })).data.leads, []);
   await post(owner, 'network/suppression', { region: 'AZ', enabled: true }, 200);
   assert.equal((await post(owner, 'network/ping', route, 200)).outcome, 'suppressed');
+  const transcript = { call: call.id, transcript: 'Agent: Hello.\nCaller: I would like to book a visit.' };
+  await post(other, 'analytics/analyze', transcript, 404);
+  await post(viewer, 'analytics/analyze', transcript, 403);
+  const analysis = await post(owner, 'analytics/analyze', transcript, 200);
+  assert.equal(analysis.qualification, 'booking-intent');
+  await post(owner, 'analytics/review', { ...transcript, summary: analysis.summary,
+    coaching: analysis.coaching, qualification: 'qualified' }, 200);
+  const profile = { site: site.id, greeting: 'Hello', booking: 'What date works?', escalation: 'Please hold.', fallback: 'How can I help?' };
+  await post(other, 'analytics/profile', profile, 404);
+  await post(owner, 'analytics/profile', profile, 200);
+  for (const [message, intent] of [['Book a visit', 'booking'], ['Human representative', 'escalation'], ['How are you?', 'fallback']]) {
+    assert.equal((await post(owner, 'analytics/simulate', { site: site.id, message }, 200)).intent, intent);
+  }
+  const report = (await api('analytics', { cookie: owner })).data;
+  const reviewed = report.calls.find(row => row.id === call.id);
+  assert.equal(reviewed.qualification, 'qualified');
+  assert.equal(reviewed.bookings, 1);
+  assert.equal(report.campaigns.find(row => row.campaign === 'Repair').forms, 1);
+  assert.equal(report.network.revenue, 6000);
+  assert.ok(report.invoices.length);
+  assert.deepEqual((await api('analytics', { cookie: other })).data.calls, []);
+  await post(viewer, 'operations/key', { scope: 'sites' }, 403);
+  const imported = await post(owner, 'operations/import-sites', { csv: 'name,number\r\n"Branch, West",+16025550120' }, 200);
+  assert.equal(imported.imported, 1);
+  await post(owner, 'operations/import-sites', { csv: 'name,number\nRollback,+16025550121\nDuplicate,+16025550120' }, 409);
+  assert.equal((await api('sites', { cookie: owner })).data.some(row => row.name === 'Rollback'), false);
+  await post(owner, 'operations/brand', { name: 'Workspace brand', accent: '#AABBCC' }, 200);
+  assert.equal((await api('portal/' + portal)).data.brand.name, 'Workspace brand');
+  const dev = await post(owner, 'operations/key', { scope: 'sites' }, 200);
+  const headers = { Authorization: 'Bearer ' + dev.token };
+  const scopedSites = await fetch(origin + '/api/v1/sites', { headers });
+  assert.ok((await scopedSites.json()).some(row => row.name === 'Branch, West'));
+  assert.equal((await fetch(origin + '/api/v1/campaigns', { headers })).status, 403);
+  const mcp = spawnSync(process.execPath, ['mcp.mjs'], {
+    env: { ...env, RINGONYX_API_ORIGIN: origin, RINGONYX_DEVELOPER_TOKEN: dev.token },
+    input: [
+      { jsonrpc: '2.0', id: 1, method: 'resources/list' },
+      { jsonrpc: '2.0', id: 2, method: 'resources/read', params: { uri: 'ringonyx://workspace/sites' } }
+    ].map(value => JSON.stringify(value)).join('\n') + '\n',
+    encoding: 'utf8', timeout: 10000
+  });
+  assert.equal(mcp.status, 0, mcp.stderr);
+  const [mcpList, mcpRead] = mcp.stdout.trim().split(/\r?\n/).map(line => JSON.parse(line));
+  assert.equal(mcpList.result.resources[0].uri, 'ringonyx://workspace/sites');
+  assert.ok(JSON.parse(mcpRead.result.contents[0].text).some(row => row.name === 'Branch, West'));
+  await post(owner, 'operations/revoke', { id: dev.id }, 200);
+  assert.equal((await fetch(origin + '/api/v1/sites', { headers })).status, 401);
+  const ops = (await api('operations', { cookie: owner })).data;
+  const event = ops.audit.find(row => row.operation === '/api/operations/import-sites');
+  assert.ok(event);
+  assert.equal((await api('operations', { cookie: other })).data.audit.some(row => row.id === event.id), false);
+  const signing = await post(owner, 'operations/signing-key', {}, 200);
+  const signed = await post(owner, 'operations/webhook-preview', { event: event.id }, 200);
+  assert.equal(JSON.parse(signed.payload).id, event.id);
+  assert.equal(signed.signature,
+    createHmac('sha256', signing.secret).update(signed.timestamp + '.' + signed.payload).digest('hex'));
+  const exportResponse = await fetch(origin + '/api/exports/crm.csv', { headers: { Cookie: owner } });
+  assert.match(await exportResponse.text(), /Web contact/);
+  assert.equal((await fetch(origin + '/health')).status, 200);
+  const backupPath = join(directory, 'backup.sqlite');
+  const snapshot = spawnSync(process.execPath, ['server.mjs', '--backup', backupPath], { env, encoding: 'utf8' });
+  assert.equal(snapshot.status, 0, snapshot.stderr);
+  const integrity = spawnSync(process.execPath, ['--input-type=module', '-e',
+    "import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync(process.argv[1], { readOnly: true }); console.log(db.prepare('PRAGMA integrity_check').get().integrity_check);",
+    backupPath], { encoding: 'utf8' });
+  assert.equal(integrity.stdout.trim(), 'ok', integrity.stderr);
+  const existing = join(directory, 'existing.sqlite');
+  writeFileSync(existing, '');
+  const collision = spawnSync(process.execPath, ['server.mjs', '--backup', existing], { env, encoding: 'utf8' });
+  assert.notEqual(collision.status, 0);
+  assert.equal(statSync(existing).size, 0);
+  const missing = join(directory, 'missing.sqlite');
+  const unused = join(directory, 'unused.sqlite');
+  const failedSnapshot = spawnSync(process.execPath, ['server.mjs', '--backup', unused], {
+    env: { ...env, RINGONYX_DB: missing }, encoding: 'utf8'
+  });
+  assert.notEqual(failedSnapshot.status, 0);
+  assert.equal(existsSync(missing), false);
+  assert.equal(existsSync(unused), false);
+
+  const restored = spawn(process.execPath, ['server.mjs'], { env: { ...env, RINGONYX_DB: backupPath } });
+  try {
+    const [startup] = await once(restored.stdout, 'data', { signal: AbortSignal.timeout(10000) });
+    const restoredOrigin = startup.toString().trim().split(' ').at(-1);
+    const login = await fetch(restoredOrigin + '/api/login', {
+      method: 'POST', body: JSON.stringify({ email: 'owner@example.test', password })
+    });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get('set-cookie').split(';')[0];
+    const restoredSites = await fetch(restoredOrigin + '/api/sites', { headers: { Cookie: cookie } });
+    assert.equal(restoredSites.status, 200);
+    assert.ok((await restoredSites.json()).some(row => row.id === site.id));
+    const restoredCalls = await fetch(restoredOrigin + '/api/calls', { headers: { Cookie: cookie } });
+    assert.equal(restoredCalls.status, 200);
+    assert.deepEqual(await restoredCalls.json(), (await api('calls', { cookie: owner })).data);
+  } finally {
+    if (restored.exitCode === null && restored.signalCode === null) {
+      const exited = once(restored, 'exit');
+      restored.kill();
+      await exited;
+    }
+  }
   await post(owner, 'logout', {}, 200);
   await api('session', { cookie: owner, status: 401 });
 });

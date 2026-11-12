@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Send an inquiry</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/brand.css">
+<script defer src="/intake.js"></script>
+<main>
+  <h1 id="intake-title">Send an inquiry</h1>
+  <section class="sign-in">
+    <form id="intake">
+      <label>Name<input name="name" required maxlength="200"></label>
+      <label>Email<input name="email" type="email"></label>
+      <label>Phone<input name="phone" type="tel" placeholder="+16025550100"></label>
+      <label>Region<input name="region" required pattern="[A-Za-z]{2}" maxlength="2"></label>
+      <label>Message<textarea name="message" required maxlength="2000"></textarea></label>
+      <button>Send</button>
+    </form>
+    <p role="status" id="intake-status"></p>
+  </section>
+</main>
+</html>

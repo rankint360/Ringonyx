@@ -1,6 +1,9 @@
 import { accountAccess, initializeAccounts, provision } from './accounts.mjs';
 import { billing, initializeBilling } from './billing.mjs';
 import { network } from './network.mjs';
+import { webLeads } from './leads.mjs';
+import { analytics } from './analytics.mjs';
+import { operations, csvExport } from './operations.mjs';
 import { routing } from './routing.mjs';
 import { attribution } from './attribution.mjs';
 import { communications } from './communications.mjs';
@@ -8,9 +11,27 @@ import { enableNumber, initializeVoice, voiceHandler } from './voice.mjs';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 
 const path = process.env.RINGONYX_DB || 'data/ringonyx.sqlite';
+if (process.argv[2] === '--backup') {
+  const destination = process.argv[3];
+  if (!destination) throw Error('Provide a new backup path.');
+  const source = new DatabaseSync(path, { readOnly: true });
+  try {
+    writeFileSync(destination, '', { flag: 'wx', mode: 0o600 });
+    try {
+      source.prepare('VACUUM INTO ?').run(destination);
+    } catch (error) {
+      unlinkSync(destination);
+      throw error;
+    }
+  } finally {
+    source.close();
+  }
+  console.log('Backup written.');
+  process.exit(0);
+}
 if (!process.env.RINGONYX_DB) mkdirSync('data', { recursive: true });
 const db = new DatabaseSync(path);
 db.exec(`
@@ -117,17 +138,17 @@ async function body(req) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) fail('Expected a JSON object');
   return data;
 }
+function addSite(account, data) {
+  const number = phone(data.number);
+  const name = required(data.name, 'site name');
+  if (query('SELECT id FROM sites WHERE number=?', number).length || tracking.contains(number)) fail('Number already assigned', 409);
+  const id = randomUUID();
+  run('INSERT INTO sites (id, name, number, account) VALUES (?, ?, ?, ?)', id, name, number, account);
+  return { id };
+}
 function write(entity, data, account) {
   const id = randomUUID();
-  if (entity === 'sites') {
-    const number = phone(data.number);
-    const name = required(data.name, 'site name');
-    return transaction(() => {
-      if (query('SELECT id FROM sites WHERE number=?', number).length || tracking.contains(number)) fail('Number already assigned', 409);
-      run('INSERT INTO sites (id, name, number, account) VALUES (?, ?, ?, ?)', id, name, number, account);
-      return { id };
-    });
-  }
+  if (entity === 'sites') return transaction(() => addSite(account, data));
   if (entity === 'renters') {
     run('INSERT INTO renters (id, name, destination, portal, account) VALUES (?, ?, ?, ?, ?)', id, required(data.name, 'renter name'), phone(data.destination), randomUUID(), account);
     return { id };
@@ -205,9 +226,14 @@ const handleVoice = voiceHandler({
 });
 const invoices = billing({ query, run, transaction, id: randomUUID, now, fail });
 const exchange = network(db, { query, run, transaction, fail, required, whole, phone, now });
+const leads = webLeads(db, { query, run, transaction, required, phone, whole, fail, now });
 const routingPlans = routing(db, { query, run, transaction, required, phone, fail });
 const tracking = attribution(db, { query, run, transaction, fail, phone });
 const comms = communications(db, { query, run, fail, required, phone, now });
+const insights = analytics(db, { query, run, required, fail, now });
+const ops = operations(db, { query, run, transaction, required, fail, now, addSite,
+  readSites: account => query(routes.sites, account),
+  campaigns: account => insights.report(account).campaigns });
 const assets = {
   '/': ['home.html', 'text/html'],
   '/home.css': ['home.css', 'text/css'],
@@ -220,6 +246,11 @@ const assets = {
   '/brand/favicons/favicon-180.png': ['brand/favicons/favicon-180.png', 'image/png'],
   '/app': ['index.html', 'text/html'],
   '/network': ['index.html', 'text/html'],
+  '/leads': ['index.html', 'text/html'],
+  '/analytics': ['index.html', 'text/html'],
+  '/operations': ['index.html', 'text/html'],
+  '/intake': ['intake.html', 'text/html'],
+  '/intake.js': ['intake.js', 'text/javascript'],
   '/communications': ['index.html', 'text/html'],
   '/partner': ['index.html', 'text/html'],
   '/portal': ['index.html', 'text/html'],
@@ -236,6 +267,13 @@ const server = createServer(async (req, res) => {
   };
   try {
     const { pathname } = new URL(req.url, 'http://localhost');
+    if (req.method === 'GET' && pathname === '/health') {
+      query('SELECT 1');
+      return json({ status: 'ok' });
+    }
+    if (req.method === 'GET' && ['/api/v1/sites', '/api/v1/campaigns', '/api/v1/scopes'].includes(pathname)) {
+      return json(ops.resource(req, pathname === '/api/v1/scopes' ? null : pathname.split('/').at(-1)));
+    }
     const visitor = /^\/tracking\/([\w-]+)$/.exec(pathname);
     if (visitor && req.method === 'POST') {
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -253,7 +291,16 @@ const server = createServer(async (req, res) => {
     }
     const portal = /^\/api\/portal\/([\w-]+)$/.exec(pathname);
     const partner = /^\/api\/network-portal\/(buyer|publisher)\/([\w-]+)$/.exec(pathname);
-    if (req.method === 'GET' && partner) return json(exchange.portal(partner[1], partner[2]));
+    if (req.method === 'GET' && partner) {
+      const result = exchange.portal(partner[1], partner[2]);
+      const table = partner[1] === 'buyer' ? 'buyers' : 'publisher_offers';
+      const [workspace] = query('SELECT account FROM ' + table + ' WHERE token=?', partner[2]);
+      result.brand = ops.brand(workspace.account);
+      if (partner[1] === 'buyer') result.leads = leads.buyerInbox(partner[2]);
+      return json(result);
+    }
+    const intake = /^\/api\/intake\/([\w-]+)$/.exec(pathname);
+    if (req.method === 'POST' && intake) return json(leads.capturePublic(intake[1], await body(req)), 202);
     const publisherRequest = /^\/api\/publisher\/(ping|post)$/.exec(pathname);
     if (req.method === 'POST' && publisherRequest) {
       const token = /^Bearer ([\w-]+)$/.exec(req.headers.authorization || '')?.[1];
@@ -261,9 +308,9 @@ const server = createServer(async (req, res) => {
       return json(exchange.publisherRequest(token, publisherRequest[1], await body(req)));
     }
     if (req.method === 'GET' && portal) {
-      const [renter] = query('SELECT id, name FROM renters WHERE portal=?', portal[1]);
+      const [renter] = query('SELECT id, name, account FROM renters WHERE portal=?', portal[1]);
       if (!renter) fail('Portal link not found', 404);
-      return json({ renter: renter.name, invoices: invoices.forRenter(renter.id), calls: query(routes.calls + ' WHERE a.renter=? AND s.account=(SELECT account FROM renters WHERE id=?) ORDER BY c.created DESC', renter.id, renter.id) });
+      return json({ renter: renter.name, brand: ops.brand(renter.account), invoices: invoices.forRenter(renter.id), calls: query(routes.calls + ' WHERE a.renter=? AND s.account=? ORDER BY c.created DESC', renter.id, renter.account) });
     }
     if (req.method === 'POST' && pathname === '/api/login') {
       return json(access.login(req, res, await body(req), fail));
@@ -279,6 +326,50 @@ const server = createServer(async (req, res) => {
       return json({ email: user.email, role: user.role, workspace: user.workspace });
     }
     if (req.method === 'POST' && user.role === 'viewer') fail('This account has read-only access.', 403);
+    if (req.method === 'POST' && pathname.startsWith('/api/')) {
+      res.once('finish', () => {
+        if (res.statusCode >= 300) return;
+        try { ops.audit(user, pathname.replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, ':id')); }
+        catch (error) { console.error('Audit record failed:', error.message); }
+      });
+    }
+    if (req.method === 'GET' && pathname === '/api/operations') return json(ops.read(user.account));
+    if (req.method === 'POST' && pathname.startsWith('/api/operations/')) {
+      return json(ops.write(user, pathname.slice('/api/operations/'.length), await body(req)));
+    }
+    if (req.method === 'GET' && ['/api/exports/crm.csv', '/api/exports/conversions.csv'].includes(pathname)) {
+      const crm = pathname.endsWith('/crm.csv');
+      const rows = crm ? leads.list(user.account) : insights.report(user.account).calls.filter(call => call.bookings > 0 || call.cents > 0);
+      const fields = crm ? ['id', 'name', 'email', 'phone', 'source', 'campaign', 'channel', 'delivered']
+        : ['id', 'created', 'source', 'campaign', 'cents', 'bookings'];
+      res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="' + (crm ? 'crm.csv' : 'conversions.csv') + '"' });
+      return res.end(csvExport(rows, fields));
+    }
+    if (req.method === 'GET' && pathname === '/api/analytics') {
+      return json({ ...insights.report(user.account), invoices: invoices.list(user.account).map(({ cents, applied }) => ({ cents, applied })) });
+    }
+    if (req.method === 'POST' && pathname.startsWith('/api/analytics/')) {
+      const data = await body(req);
+      if (pathname.endsWith('/analyze')) return json(insights.analyze(user.account, data));
+      if (pathname.endsWith('/review')) return json(insights.saveReview(user.account, user.email ?? 'local operator', data));
+      if (pathname.endsWith('/profile')) return json(insights.profile(user.account, data));
+      if (pathname.endsWith('/simulate')) return json(insights.simulate(user.account, data));
+      fail('Unknown analytics operation.', 404);
+    }
+    if (req.method === 'GET' && pathname === '/api/leads') {
+      return json({ leads: leads.list(user.account), quotes: leads.quotes(user.account),
+        callSources: query(`SELECT c.source, COUNT(*) AS count FROM calls c
+          JOIN sites s ON s.id=c.site WHERE s.account=? GROUP BY c.source`, user.account) });
+    }
+    if (req.method === 'POST' && pathname.startsWith('/api/leads/')) {
+      const data = await body(req);
+      if (pathname === '/api/leads/capture') return json(leads.capture(user.account, data));
+      if (pathname === '/api/leads/ping') return json(leads.ping(user.account, data));
+      if (pathname === '/api/leads/direct') return json(leads.deliver(user.account, data, 'direct'));
+      if (pathname === '/api/leads/post') return json(leads.deliver(user.account, data, 'quoted'));
+      fail('Unknown lead operation.', 404);
+    }
     if (req.method === 'GET' && pathname === '/api/communications') return json(comms.list(user.account));
     if (req.method === 'POST' && pathname.startsWith('/api/communications/')) {
       return json(comms.write(user.account, pathname.slice('/api/communications/'.length), await body(req)));

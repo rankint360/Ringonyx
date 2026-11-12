@@ -89,15 +89,18 @@ async function render() {
     const kind = new URLSearchParams(location.search).get('kind');
     if (!portal || !['buyer', 'publisher'].includes(kind)) throw Error('Open the partner link provided by your operator.');
     const result = await request('network-portal/' + kind + '/' + encodeURIComponent(portal));
+    applyPortalBrand(result.brand);
     const total = result.calls.reduce((sum, call) => sum + call.cents, 0);
     app.innerHTML = '<h1>' + escape(result.name) + '</h1><section><h2>' +
       (kind === 'buyer' ? 'Buyer charges' : 'Publisher payout statement') + '</h2><p>Total ' +
-      money(total) + '</p>' + networkTable(result.calls, true) + '</section>';
+      money(total) + '</p>' + networkTable(result.calls, true) + '</section>' +
+      (kind === 'buyer' ? '<section><h2>Delivered leads</h2>' + leadTable(result.leads, true) + '</section>' : '');
     return;
   }
   if (location.pathname === '/portal') {
     if (!portal) throw Error('Open the portal link provided by your operator.');
     const result = await request('portal/' + encodeURIComponent(portal));
+    applyPortalBrand(result.brand);
     app.innerHTML = '<h1>' + escape(result.renter) + '</h1>' + history(result.calls, false) + invoiceList(result.invoices);
     return;
   }
@@ -116,7 +119,21 @@ async function render() {
   app.innerHTML = `<div class="workspace-header"><div><h1>${escape(session.workspace)}</h1>
     <p>${escape(session.email)} · ${escape(session.role)}</p></div>
     <form id="sign-out"><button>Sign out</button></form></div>
-    <p><a href="/app">Rentals and billing</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a></p><div id="dashboard"></div>`;
+    <p><a href="/app">Rentals and billing</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a> · <a href="/leads">Web leads</a> · <a href="/analytics">Analytics</a> · <a href="/operations">Operations</a></p><div id="dashboard"></div>`;
+  if (location.pathname === '/operations') {
+    renderOperations(document.querySelector('#dashboard'), await request('operations'), session.role === 'owner');
+    return;
+  }
+  if (location.pathname === '/analytics') {
+    const [sites, data] = await Promise.all([request('sites'), request('analytics')]);
+    renderAnalytics(document.querySelector('#dashboard'), sites, data, canWrite);
+    return;
+  }
+  if (location.pathname === '/leads') {
+    const [sites, data, partners] = await Promise.all([request('sites'), request('leads'), request('network')]);
+    renderLeads(document.querySelector('#dashboard'), sites, data, partners.buyers, canWrite);
+    return;
+  }
   if (location.pathname === '/communications') {
     const [sites, data] = await Promise.all([request('sites'), request('communications')]);
     renderCommunications(document.querySelector('#dashboard'), sites, data, canWrite);
@@ -197,6 +214,118 @@ async function render() {
     (disputes.map(row => '<p>' + escape(row.renter_name) + ' · ' + escape(row.reason) + ' · ' +
       (row.resolved ? escape(row.resolution) + ' · Credit ' + money(row.credit) : 'Open') + '</p>').join('') || '<p>No disputes.</p>') + '</section>');
 }
+function leadTable(leads, partner = false) {
+  if (!leads.length) return '<p>No leads yet.</p>';
+  return '<div class="scroll"><table><thead><tr><th>Contact</th><th>Channel</th><th>Source</th><th>Region</th><th>Message</th>' +
+    (partner ? '' : '<th>Site</th><th>Delivery</th>') + '</tr></thead><tbody>' + leads.map(lead => '<tr>' +
+    [[lead.name, lead.email, lead.phone].filter(Boolean).join(' · '), lead.channel,
+      [lead.source, lead.campaign].filter(Boolean).join(' · '), lead.region, lead.message,
+      ...(partner ? [] : [lead.site_name, lead.buyer_name ? lead.buyer_name + ' · ' + lead.mode : 'Unassigned'])
+    ].map(value => '<td>' + escape(value) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+}
+function renderLeads(dashboard, sites, data, buyers, canWrite) {
+  const pending = data.leads.filter(lead => !lead.delivered).map(lead => ({
+    ...lead, label: lead.name + ' · ' + lead.region + ' · ' + lead.channel
+  }));
+  const lead = select('lead', 'Unassigned lead', pending, 'id', 'label');
+  const quotes = data.quotes.map(quote => ({
+    ...quote, value: quote.lead + ':' + quote.id,
+    label: (pending.find(row => row.id === quote.lead)?.name ?? 'Lead') + ' · ' + quote.buyer_name + ' · ' + money(quote.cents)
+  }));
+  const counts = new Map(data.callSources.map(row => [row.source, { calls: row.count, form: 0, chat: 0 }]));
+  for (const row of data.leads) {
+    if (!counts.has(row.source)) counts.set(row.source, { calls: 0, form: 0, chat: 0 });
+    counts.get(row.source)[row.channel]++;
+  }
+  const report = '<div class="scroll"><table><thead><tr><th>Source</th><th>Calls</th><th>Forms</th><th>Chat</th></tr></thead><tbody>' +
+    [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([source, row]) =>
+      '<tr><td>' + escape(source) + '</td><td>' + row.calls + '</td><td>' + row.form + '</td><td>' + row.chat + '</td></tr>').join('') +
+    '</tbody></table></div>';
+  dashboard.innerHTML = (canWrite ? '<div class="grid">' +
+    form('Capture a lead', 'leads/capture', select('site', 'Tracking site', sites, 'id', 'name') +
+      '<label>Channel<select name="channel"><option value="form">Web form</option><option value="chat">Chat</option></select></label>' +
+      field('name', 'Contact name') + '<label>Email<input name="email" type="email"></label><label>Phone<input name="phone" type="tel"></label>' +
+      field('region', 'Two-letter region', 'maxlength="2"') + field('source', 'Source') +
+      '<label>Campaign<input name="campaign"></label><label>Message<textarea name="message" required maxlength="2000"></textarea></label>', 'Capture lead') +
+    form('Direct delivery', 'leads/direct', lead + select('buyer', 'Buyer', buyers, 'id', 'name'), 'Deliver lead') +
+    form('Request a quote', 'leads/ping', lead + field('floor', 'Bid floor in cents', 'type="number" min="0" value="0"'), 'Ping buyers') +
+    form('Accept a quote', 'leads/post', select('selection', 'Available quote', quotes, 'value', 'label'), 'Post lead') + '</div>' : '') +
+    '<section><h2>Intake links</h2>' + (sites.map(site => '<p>' + escape(site.name) + ' · <a href="/intake?site=' +
+      encodeURIComponent(site.id) + '">Web form</a> · <a href="/intake?site=' + encodeURIComponent(site.id) +
+      '&amp;channel=chat">Chat intake</a></p>').join('') || '<p>Create a tracking site to get intake links.</p>') + '</section>' +
+    '<section><h2>Lead inbox</h2>' + leadTable(data.leads) + '</section><section><h2>Calls and web leads by source</h2>' + report + '</section>';
+}
+function applyPortalBrand(brand) {
+  if (!brand) return;
+  const header = document.querySelector('header .brand');
+  header.textContent = brand.name;
+  header.style.borderBottom = '3px solid ' + brand.accent;
+  document.title = brand.name;
+}
+function renderOperations(dashboard, data, owner) {
+  dashboard.innerHTML = '<section><h2>Exports</h2><p><a href="/api/exports/crm.csv">CRM contacts CSV</a> · ' +
+    '<a href="/api/exports/conversions.csv">Conversion CSV</a> · <a href="/health">Service health</a></p></section>' +
+    (owner ? '<div class="grid">' +
+      form('Portal branding', 'operations/brand', field('name', 'Display name') +
+        field('accent', 'Accent color', 'placeholder="#C6FF38" maxlength="7"'), 'Save branding') +
+      form('Import tracking sites', 'operations/import-sites',
+        '<label>CSV with name,number header<textarea name="csv" required rows="5"></textarea></label>', 'Import sites') +
+      form('Create developer key', 'operations/key',
+        '<label>Read scope<select name="scope"><option value="sites">Sites</option><option value="campaigns">Campaigns</option></select></label>', 'Create key') +
+      form('Revoke developer key', 'operations/revoke',
+        select('id', 'Key', data.keys.map(key => ({ ...key, label: key.scope + ' · ' + key.id.slice(0, 8) })), 'id', 'label'), 'Revoke key') +
+      form('Webhook signing', 'operations/signing-key', '<p>Creating a key replaces the current signing key.</p>', 'Create signing key') +
+      form('Signed webhook payload', 'operations/webhook-preview',
+        select('event', 'Audit event (optional)', data.audit.map(row => ({ ...row,
+          label: row.operation + ' · ' + new Date(row.created).toLocaleString()
+        })), 'id', 'label').replace('<select required', '<select').replace('>Select</option>', '>Test event</option>'),
+        'Sign payload') + '</div>' : '') +
+    '<section><h2>Audit log</h2>' + (data.audit.map(row => '<p>' +
+      escape(new Date(row.created).toLocaleString() + ' · ' + row.actor + ' · ' + row.operation) + '</p>').join('') ||
+      '<p>No audited operations yet.</p>') + '</section>';
+}
+function renderAnalytics(dashboard, sites, data, canWrite) {
+  const calls = data.calls.filter(call => call.outcome === 'answered').map(call => ({
+    ...call, label: call.site_name + ' · ' + new Date(call.created).toLocaleString() + ' · ' + call.id.slice(0, 8)
+  }));
+  const total = data.invoices.reduce((sum, invoice) => sum + invoice.cents, 0);
+  const applied = data.invoices.reduce((sum, invoice) => sum + invoice.applied, 0);
+  const table = (headers, rows) => rows.length ? '<div class="scroll"><table><thead><tr>' +
+    headers.map(header => '<th scope="col">' + escape(header) + '</th>').join('') + '</tr></thead><tbody>' +
+    rows.map(row => '<tr>' + row.map(value => '<td>' + escape(value) + '</td>').join('') + '</tr>').join('') +
+    '</tbody></table></div>' : '<p>No records yet.</p>';
+  const site = select('site', 'Tracking site', sites, 'id', 'name');
+  const review = '<section><h2>Review a conversation</h2><form data-action="analytics/review">' +
+    select('call', 'Answered call', calls, 'id', 'label') +
+    '<label>Transcript<textarea name="transcript" rows="5" maxlength="6000" required placeholder="Caller: I would like to book a visit."></textarea></label>' +
+    '<button type="submit" data-operation="analytics/analyze" formnovalidate>Preview analysis</button>' +
+    field('summary', 'Reviewed summary', 'maxlength="200"') +
+    '<label>Qualification<select name="qualification"><option value="review-required">Needs review</option><option value="qualified">Qualified</option><option value="unqualified">Unqualified</option></select></label>' +
+    field('coaching', 'Coaching note', 'maxlength="200"') + '<button>Save review</button></form></section>';
+  dashboard.innerHTML = '<div class="grid"><section><h2>Renter invoices</h2><p>Invoiced ' + money(total) +
+    ' · Applied ' + money(applied) + ' · Balance ' + money(total - applied) + '</p></section>' +
+    '<section><h2>Network settlement</h2><p>Buyer revenue ' + money(data.network.revenue) +
+    ' · Publisher payouts ' + money(data.network.payout) + ' · Margin ' + money(data.network.revenue - data.network.payout) +
+    '</p></section></div><section><h2>Campaign report</h2>' +
+    table(['Source', 'Campaign', 'Calls', 'Forms', 'Chats', 'Call charges'], data.campaigns.map(row =>
+      [row.source, row.campaign || '—', row.calls, row.forms, row.chats, money(row.call_charges)])) + '</section>' +
+    (canWrite ? '<div class="grid">' + review +
+      form('Configure an answering preview', 'analytics/profile', site + field('greeting', 'Greeting') +
+        field('booking', 'Booking response') + field('escalation', 'Escalation response') +
+        field('fallback', 'Fallback response'), 'Save answering profile') +
+      form('Test answering responses', 'analytics/simulate', site + field('message', 'Sample caller message'), 'Simulate response') + '</div>' : '') +
+    '<section><h2>Answering profiles</h2>' +
+    table(['Site', 'Greeting', 'Booking', 'Escalation', 'Fallback'], data.profiles.map(row =>
+      [row.site_name, row.greeting, row.booking, row.escalation, row.fallback])) + '</section>' +
+    '<section><h2>Conversation records</h2>' + (data.calls.map(call =>
+      '<details><summary>' + escape(call.site_name + ' · ' + call.source + ' · ' +
+        new Date(call.created).toLocaleString() + ' · ' + call.outcome) + '</summary><p>' +
+        escape('Campaign ' + (call.campaign || '—') + ' · Bookings ' + call.bookings + ' · Call charge ' + money(call.cents)) +
+        '</p>' + (call.transcript ? '<p>' + escape(call.summary + ' · ' + call.qualification) + '</p><p>' +
+          escape('Coaching · ' + call.coaching) + '</p><p>' + escape('Reviewed by ' + call.reviewed_by) +
+          '</p><pre style="white-space:pre-wrap">' + escape(call.transcript) + '</pre>' : '<p>No transcript review.</p>') +
+        '</details>').join('') || '<p>No calls yet.</p>') + '</section>';
+}
 function renderCommunications(dashboard, sites, data, canWrite) {
   const site = select('site', 'Tracking site', sites, 'id', 'name');
   const drafts = data.numberRequests.filter(row => row.state === 'draft').map(row => ({
@@ -234,7 +363,7 @@ app.addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.target;
   const data = Object.fromEntries(new FormData(form));
-  const button = form.querySelector('button');
+  const button = event.submitter || form.querySelector('button');
   button.disabled = true;
   status.textContent = '';
   try {
@@ -248,7 +377,8 @@ app.addEventListener('submit', async event => {
       }
       if (Object.hasOwn(data, 'enabled')) data.enabled = data.enabled === 'true';
       if (Object.hasOwn(data, 'paused')) data.paused = data.paused === 'true';
-      const action = form.dataset.action;
+      const action = event.submitter?.dataset.operation || form.dataset.action;
+      if (action === 'leads/post') [data.lead, data.quote] = data.selection.split(':');
       if (action === 'routing') {
         data.routes = data.routes.split(/\r?\n/).filter(line => line.trim()).map(line => {
           const [label, destination] = line.split('|').map(value => value.trim());
@@ -263,6 +393,26 @@ app.addEventListener('submit', async event => {
         });
       }
       const result = await request(action === 'complete' ? 'calls/' + encodeURIComponent(data.id) + '/complete' : action, data);
+      if (['operations/key', 'operations/signing-key', 'operations/webhook-preview'].includes(action)) {
+        await render();
+        status.textContent = result.token ? 'Copy this developer key: ' + result.token
+          : result.secret ? 'Copy this signing key: ' + result.secret
+            : 'Timestamp ' + result.timestamp + ' · Signature ' + result.signature + ' · Payload ' + result.payload;
+        return;
+      }
+      if (action === 'analytics/analyze') {
+        form.elements.summary.value = result.summary;
+        form.elements.coaching.value = result.coaching;
+        form.elements.qualification.value = 'review-required';
+        status.textContent = result.qualification === 'booking-intent'
+          ? 'Booking intent detected. Confirm the qualification before saving.'
+          : 'Review the suggested summary and coaching note before saving.';
+        return;
+      }
+      if (action === 'analytics/simulate') {
+        status.textContent = result.greeting + ' · ' + result.intent + ' · ' + result.response;
+        return;
+      }
       if (action === 'routing/preview') {
         const outcome = result.menuStatus === 'invalid-digit' ? 'That key has no menu option.'
           : result.next ? 'Next destination · ' + result.next.label + ' · ' + result.next.destination
@@ -280,7 +430,9 @@ app.addEventListener('submit', async event => {
           ? route + ' · Disclosure: ' + result.recording.disclosure + ' · Consent: ' + result.recording.decision
           : route;
       } else {
-        status.textContent = 'Saved.';
+        if (action === 'leads/ping') status.textContent = result.quote ? result.buyer + ' quoted ' + money(result.cents) : 'No eligible buyer met the bid floor.';
+        else if (action === 'leads/capture' && result.duplicate) status.textContent = 'An existing lead matches this contact.';
+        else status.textContent = 'Saved.';
       }
     }
     await render();

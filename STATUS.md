@@ -8,6 +8,14 @@ Phase 3 local billing passed integration tests and browser acceptance on 2026-11
 
 Phase 4 local network passed integration tests and browser acceptance on 2026-11-12. External buyer bids, live carrier routing, and payout transfers remain deferred.
 
+Phase 5 local web lead intake, routing, and reporting passed integration tests and browser acceptance on 2026-11-12. External chat providers and buyer delivery endpoints remain deferred.
+
+Phase 6 local analytics and conversation workflows passed integration tests and browser acceptance on 2026-11-12. Audio transcription, model-backed analysis, and live voice answering remain deferred.
+
+Phase 7 local operations passed integration tests on 2026-11-12. Outbound delivery, platform sync, and hosted monitoring remain deferred.
+
+Phase 8 local release preparation passed on 2026-11-12. The production-mode test restored a SQLite snapshot on a fresh server and verified account access and persisted records. The README covers staging, acceptance, recovery, and rollback.
+
 | Phase | Step | Feature | Status |
 |---|---|---|---|
 | Foundation | 01 | Local server and persistent SQLite database | Implemented |
@@ -42,29 +50,29 @@ Phase 4 local network passed integration tests and browser acceptance on 2026-11
 | Network | 30 | Publisher-side ping/post | Local authenticated endpoints implemented |
 | Network | 31 | Predictive routing | Local historical revenue ranking implemented |
 | Network | 32 | Traffic quality and suppression rules | Duplicate reference protection, regional suppression, partner pauses, and routing decisions implemented locally |
-| Leads | 33 | Web form lead intake | Pending |
-| Leads | 34 | Chat lead intake | Pending |
-| Leads | 35 | Validation and deduplication | Pending |
-| Leads | 36 | Direct-post lead delivery | Pending |
-| Leads | 37 | Ping/post lead delivery | Pending |
-| Analytics | 38 | Transcription | Pending |
-| Analytics | 39 | AI summaries and qualification | Pending |
-| Analytics | 40 | Conversation coaching | Pending |
-| Analytics | 41 | AI answering | Pending |
-| Analytics | 42 | Campaign and financial reports | Pending |
-| Integrations | 43 | Signed outbound webhooks | Pending |
-| Integrations | 44 | Ad conversion exports | Pending |
-| Integrations | 45 | CRM integration | Pending |
-| Integrations | 46 | CSV migration | Pending |
-| Integrations | 47 | Scoped developer API | Pending |
-| Integrations | 48 | MCP access | Pending |
-| Operations | 49 | White-label portals | Pending |
-| Operations | 50 | Audit log | Pending |
-| Operations | 51 | Health monitoring and backups | Pending |
+| Leads | 33 | Web form lead intake | Local hosted intake and campaign attribution implemented |
+| Leads | 34 | Chat lead intake | Local asynchronous chat message intake implemented |
+| Leads | 35 | Validation and deduplication | Contact validation and site-scoped deduplication implemented |
+| Leads | 36 | Direct-post lead delivery | Local buyer inbox delivery implemented |
+| Leads | 37 | Ping/post lead delivery | Local price quotes and buyer inbox delivery implemented |
+| Analytics | 38 | Transcription | Local transcript entry and review implemented; audio transcription deferred |
+| Analytics | 39 | AI summaries and qualification | Local excerpts, booking-intent rules, and human review implemented; model integration deferred |
+| Analytics | 40 | Conversation coaching | Suggested and editable coaching notes implemented locally |
+| Analytics | 41 | AI answering | Local response configuration and simulation implemented; live voice integration deferred |
+| Analytics | 42 | Campaign and financial reports | Local campaign, renter invoice, and network settlement reporting implemented |
+| Integrations | 43 | Signed outbound webhooks | Local audit event signing implemented. Outbound delivery deferred |
+| Integrations | 44 | Ad conversion exports | Local conversion CSV implemented. Ad platform sync deferred |
+| Integrations | 45 | CRM integration | Local contact CSV implemented. CRM sync deferred |
+| Integrations | 46 | CSV migration | Local tracking site import implemented |
+| Integrations | 47 | Scoped developer API | Local site and campaign read scopes implemented |
+| Integrations | 48 | MCP access | Local read-only stdio bridge implemented |
+| Operations | 49 | White-label portals | Local workspace name and accent implemented |
+| Operations | 50 | Audit log | Recent successful authenticated changes logged |
+| Operations | 51 | Health monitoring and backups | Local health endpoint and SQLite snapshot command implemented. Hosted monitoring deferred |
 | Release | 51a | Marketing homepage, interactive call walkthrough, and Ringonyx brand assets | Implemented |
-| Release | 52 | GitHub prototype source push | Complete |
-| Release | 53 | Staging deployment | Pending |
-| Release | 54 | Live acceptance testing | Pending |
-| Release | 55 | Public launch | Pending |
+| Release | 52 | GitHub source publication | Release source and records prepared |
+| Release | 53 | Staging deployment | Deployment and rollback procedures documented. Hosted rollout deferred |
+| Release | 54 | Acceptance testing | Local tests passed. Hosted and live provider acceptance deferred |
+| Release | 55 | Public launch | Launch checks documented. Public rollout deferred |
 
 The local slice covers a tracked call from simulated arrival through qualified charge and renter handoff. Live forwarding and customer-ready billing remain open.
