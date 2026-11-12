@@ -16,7 +16,12 @@ async function request(path, data) {
 function history(calls, operator) {
   return `<section><h2>${operator ? 'Call log' : 'Calls and charges'}</h2><p>Total qualified charges <strong>${money(calls.reduce((sum, call) => sum + call.cents, 0))}</strong></p>
     <div class="scroll"><table><thead><tr><th>Time</th><th>Site</th><th>Renter</th><th>Source</th><th>Outcome</th><th>Seconds</th><th>Charge</th></tr></thead>
-    <tbody>${calls.map(call => `<tr>${[new Date(call.created).toLocaleString(), call.site_name, call.renter_name, call.source, call.outcome, call.duration ?? '—', money(call.cents)].map(value => '<td>' + escape(value) + '</td>').join('')}</tr>`).join('')}</tbody></table></div>
+    <tbody>${calls.map(call => `<tr>${[new Date(call.created).toLocaleString(), call.site_name,
+      operator ? [call.renter_name, call.simulated_destination].filter(Boolean).join(' · ') : call.renter_name,
+      [call.source, call.campaign].filter(Boolean).join(' · '),
+      operator && call.simulated_menu_status === 'invalid-digit' ? 'Unrouted · invalid keypad choice' :
+        [call.outcome, operator && call.simulated_disclosure ? 'Recording consent: ' + call.simulated_recording_decision : ''].filter(Boolean).join(' · '),
+      call.duration ?? '—', money(call.cents)].map(value => '<td>' + escape(value) + '</td>').join('')}</tr>`).join('')}</tbody></table></div>
     ${calls.length ? '' : '<p>No calls yet.</p>'}</section>`;
 }
 const field = (name, label, options = '') => `<label>${label}<input name="${name}" required ${options}></label>`;
@@ -100,13 +105,18 @@ async function render() {
   app.innerHTML = `<div class="workspace-header"><div><h1>${escape(session.workspace)}</h1>
     <p>${escape(session.email)} · ${escape(session.role)}</p></div>
     <form id="sign-out"><button>Sign out</button></form></div>
-    <p><a href="/app">Rentals and billing</a> · <a href="/network">Buyer and publisher network</a></p><div id="dashboard"></div>`;
+    <p><a href="/app">Rentals and billing</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a></p><div id="dashboard"></div>`;
+  if (location.pathname === '/communications') {
+    const [sites, data] = await Promise.all([request('sites'), request('communications')]);
+    renderCommunications(document.querySelector('#dashboard'), sites, data, canWrite);
+    return;
+  }
   if (location.pathname === '/network') {
     renderNetwork(document.querySelector('#dashboard'), await request('network'), canWrite);
     return;
   }
-  const [sites, renters, assignments, calls, invoices] = await Promise.all(
-    ['sites', 'renters', 'assignments', 'calls', 'invoices'].map(path => request(path))
+  const [sites, renters, assignments, calls, invoices, routing, menus, trackingPool] = await Promise.all(
+    ['sites', 'renters', 'assignments', 'calls', 'invoices', 'routing', 'routing/menu', 'tracking-pool'].map(path => request(path))
   );
   const pending = calls.filter(call => call.outcome === 'pending' && !call.carrier).map(call => ({ id: call.id, label: call.site_name + ' · ' + new Date(call.created).toLocaleTimeString() }));
   const dashboard = document.querySelector('#dashboard');
@@ -114,6 +124,15 @@ async function render() {
     ${form('Tracking site', 'sites', field('name', 'Site name') + field('number', 'Tracking number', 'placeholder="+16025550100"'), 'Add site')}
     ${form('Renter', 'renters', field('name', 'Business name') + field('destination', 'Forwarding number', 'placeholder="+16025550101"'), 'Add renter')}
     ${form('Connect a tracking number', 'voice/numbers', select('site','Site',sites,'id','name') + field('source','Campaign source','placeholder="Google Ads"'), 'Save number mapping')}
+    ${form('Add a pool number', 'tracking-pool', select('site','Site',sites,'id','name') +
+      field('number', 'Tracking number', 'placeholder="+16025550106"'), 'Add pool number')}
+    ${form('Fallback routing plan', 'routing', select('site', 'Site', sites, 'id', 'name') +
+      '<label>Destinations in order, one per line as Label | +number<textarea name="routes" rows="3" placeholder="Backup desk | +16025550102"></textarea></label>', 'Replace fallback plan')}
+    ${form('Preview routing', 'routing/preview', select('site', 'Site', sites, 'id', 'name') +
+      '<label>Caller key (optional)<input name="digit" inputmode="numeric" maxlength="1"></label>' +
+      '<label>Failed destinations, one per line<textarea name="failed" rows="2"></textarea></label>', 'Find next destination')}
+    ${form('Phone menu', 'routing/menu', select('site', 'Site', sites, 'id', 'name') + field('prompt', 'Spoken prompt') +
+      '<label>Options, one per line as Digit | Label | +number<textarea name="options" rows="3" required placeholder="1 | Sales | +16025550102"></textarea></label>', 'Save phone menu')}
     ${form('Set monthly rent', 'rental-rates', select('renter', 'Renter', renters, 'id', 'name') +
       field('period', 'Effective month (UTC)', 'type="month"') +
       field('cents', 'Monthly rent in cents', 'type="number" min="0"'), 'Save rent rate')}
@@ -126,11 +145,58 @@ async function render() {
       '<label>Entry type<select name="kind"><option value="payment">Payment</option><option value="credit">Credit</option></select></label>' +
       field('cents', 'Amount in cents', 'type="number" min="1"') + field('reference', 'Payment or credit reference'), 'Record entry')}
     ${form('Assign or replace renter', 'assignments', select('site','Site',sites,'id','name') + select('renter','Renter',renters,'id','name') + field('rate','Charge in cents','type="number" min="0" value="4500"') + field('minimum','Minimum talk time (seconds)','type="number" min="0" value="90"'), 'Save assignment')}
-    ${form('Simulate incoming call', 'calls', select('number','Tracking number',sites,'number','name') + field('source','Attribution source','value="Google Ads"'), 'Simulate arrival')}
+    ${form('Simulate incoming call', 'calls', select('number','Tracking number', [...sites, ...trackingPool.map(row => ({
+      ...row, name: row.number + ' · Visitor pool'
+    }))], 'number','name') + field('source','Attribution source for fixed numbers','value="Google Ads"') +
+      '<label>Caller key (optional)<input name="digit" inputmode="numeric" maxlength="1"></label>' +
+      '<label>Simulated recording consent<select name="recordingConsent"><option value="">No response</option><option value="granted">Granted</option><option value="declined">Declined</option></select></label>' +
+      '<label>Failed destinations (optional)<textarea name="failed" rows="2"></textarea></label>', 'Simulate arrival')}
     ${form('Simulate call completion', 'complete', select('id','Pending call',pending,'id','label') + field('duration','Talk time (seconds)','type="number" min="0" value="95"') + '<label>Outcome<select name="outcome"><option>answered</option><option>missed</option></select></label>', 'Finalize call')}
     </div>` : '') + `<div class="grid"><section><h2>Tracking sites</h2>${sites.map(site => `<p>${escape(site.name)} · ${escape(site.number)}<br><small>${escape(renters.find(renter => renter.id === assignments.find(row => row.site === site.id && !row.ended)?.renter)?.name || 'Unassigned')}</small></p>`).join('') || '<p>No sites yet.</p>'}</section>
     <section><h2>${canWrite ? 'Renter portals' : 'Renters'}</h2>${renters.map(renter => canWrite ? `<p><a href="/portal?token=${encodeURIComponent(renter.portal)}">${escape(renter.name)}</a></p>` : `<p>${escape(renter.name)}</p>`).join('') || '<p>No renters yet.</p>'}</section></div><section><h2>Assignment history</h2>${assignments.map(row => `<p>${escape(sites.find(site => site.id === row.site)?.name)} · ${escape(renters.find(renter => renter.id === row.renter)?.name)} · ${money(row.rate)} · ${row.minimum}s minimum <small>${escape(new Date(row.started).toLocaleString())} → ${row.ended ? escape(new Date(row.ended).toLocaleString()) : 'Active'}</small></p>`).join('') || '<p>No assignments yet.</p>'}</section>${history(calls, true)}`;
-  dashboard.insertAdjacentHTML('beforeend', invoiceList(invoices));
+  dashboard.insertAdjacentHTML('beforeend', '<section><h2>Fallback destinations</h2>' +
+    (routing.map(row => '<p>' + escape(sites.find(site => site.id === row.site)?.name) + ' · ' +
+      row.position + '. ' + escape(row.label) + ' · ' + escape(row.destination) + '</p>').join('') ||
+      '<p>No fallback destinations configured.</p>') + '</section><section><h2>Phone menus</h2>' +
+    (menus.map(row => '<p>' + escape(sites.find(site => site.id === row.site)?.name) + ' · ' +
+      escape(row.prompt) + ' · ' + escape(row.digit) + ' → ' + escape(row.label) + ' · ' +
+      escape(row.destination) + '</p>').join('') || '<p>No phone menus configured.</p>') + '</section><section><h2>Visitor number pools</h2>' +
+    (trackingPool.map(row => '<p>' + escape(sites.find(site => site.id === row.site)?.name) + ' · ' + escape(row.number) +
+      ' · Site ID <code>' + escape(row.site) + '</code></p>').join('') || '<p>No visitor pool numbers configured.</p>') +
+    '</section>' + invoiceList(invoices));
+}
+function renderCommunications(dashboard, sites, data, canWrite) {
+  const site = select('site', 'Tracking site', sites, 'id', 'name');
+  const drafts = data.numberRequests.filter(row => row.state === 'draft').map(row => ({
+    ...row, label: row.site_name + ' · ' + row.kind + ' · ' + row.requested
+  }));
+  const pending = data.callbacks.filter(row => row.state === 'queued').map(row => ({
+    ...row, label: row.site_name + ' · ' + row.destination
+  }));
+  const list = (rows, describe) => rows.length
+    ? '<ul>' + rows.map(row => '<li>' + escape(describe(row)) + '</li>').join('') + '</ul>'
+    : '<p>No records yet.</p>';
+  dashboard.innerHTML = (canWrite ? '<div class="grid">' +
+    form('Prepare a number request', 'communications/numbers', site +
+      '<label>Request type<select name="kind"><option value="provision">Provision a new number</option><option value="port">Port an existing number</option></select></label>' +
+      field('requested', 'Area code or full port number', 'placeholder="602 or +16025550100"'), 'Save draft') +
+    form('Cancel a number request', 'communications/cancel-number',
+      select('id', 'Draft request', drafts, 'id', 'label'), 'Cancel draft') +
+    form('Recording and disclosure', 'communications/recording', site +
+      '<label>Recording preference<select name="enabled"><option value="false">Off</option><option value="true">On</option></select></label>' +
+      '<label>Spoken disclosure<input name="disclosure" maxlength="200"></label>', 'Save preference') +
+    form('Queue a callback', 'communications/callbacks', site + field('destination', 'Callback number'), 'Queue request') +
+    form('Cancel a callback', 'communications/cancel-callback', select('id', 'Queued request', pending, 'id', 'label'), 'Cancel request') +
+    form('Simulate incoming SMS', 'communications/sms', site + field('sender', 'Sender number') +
+      '<label>Message<textarea name="message" maxlength="1600" required></textarea></label>', 'Add to inbox') +
+    '</div>' : '') + '<div class="grid"><section><h2>Number request drafts</h2>' +
+    list(data.numberRequests, row => row.site_name + ' · ' + row.kind + ' · ' + row.requested + ' · ' + row.state) +
+    '</section><section><h2>Recording preferences</h2>' +
+    list(data.recordings, row => row.site_name + ' · ' + (row.enabled ? 'On · ' + row.disclosure : 'Off')) +
+    '</section><section><h2>Callback requests</h2>' +
+    list(data.callbacks, row => row.site_name + ' · ' + row.destination + ' · ' + row.state) +
+    '</section><section><h2>Simulated SMS inbox</h2>' +
+    list(data.messages, row => row.site_name + ' · ' + row.sender + ' · ' + row.body) + '</section></div>';
 }
 app.addEventListener('submit', async event => {
   event.preventDefault();
@@ -150,12 +216,39 @@ app.addEventListener('submit', async event => {
       }
       if (Object.hasOwn(data, 'enabled')) data.enabled = data.enabled === 'true';
       const action = form.dataset.action;
+      if (action === 'routing') {
+        data.routes = data.routes.split(/\r?\n/).filter(line => line.trim()).map(line => {
+          const [label, destination] = line.split('|').map(value => value.trim());
+          return { label, destination };
+        });
+      }
+      if (action === 'routing/preview' || action === 'calls') data.failed = data.failed.split(/\s+/).filter(Boolean);
+      if (action === 'routing/menu') {
+        data.options = data.options.split(/\r?\n/).filter(line => line.trim()).map(line => {
+          const [digit, label, destination] = line.split('|').map(value => value.trim());
+          return { digit, label, destination };
+        });
+      }
       const result = await request(action === 'complete' ? 'calls/' + encodeURIComponent(data.id) + '/complete' : action, data);
+      if (action === 'routing/preview') {
+        const outcome = result.menuStatus === 'invalid-digit' ? 'That key has no menu option.'
+          : result.next ? 'Next destination · ' + result.next.label + ' · ' + result.next.destination
+            : 'No remaining destinations.';
+        status.textContent = result.prompt ? result.prompt + ' · ' + outcome : outcome;
+        return;
+      }
       if (action === 'network/ping') {
         status.textContent = result.buyer ? result.buyer + ' · ' + money(result.bid) : 'No match · ' + result.outcome;
         return;
       }
-      status.textContent = action === 'calls' ? (result.destination ? 'Selected destination ' + result.destination : 'No active renter') : 'Saved.';
+      if (action === 'calls') {
+        const route = result.destination ? 'Selected destination ' + result.destination : 'No destination selected';
+        status.textContent = result.recording.disclosure
+          ? route + ' · Disclosure: ' + result.recording.disclosure + ' · Consent: ' + result.recording.decision
+          : route;
+      } else {
+        status.textContent = 'Saved.';
+      }
     }
     await render();
   } catch (error) {

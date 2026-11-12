@@ -26,7 +26,19 @@ Signed webhook tests cover the forwarding path locally. A real carrier call and 
 
 The product homepage is at `/` and the operator console is at `/app`. The homepage demo uses sample data and does not change the console database.
 
+## Test visitor attribution locally
+
+Add a tracking site, assign a renter, and add a pool number in the console. Copy the site ID from **Visitor number pools**. On a test page, use a fixed phone link and load the Ringonyx script after that link.
+
+```html
+<a data-ringonyx-number href="tel:+16025550100">+16025550100</a>
+<script src="http://127.0.0.1:3000/tracking.js" data-site="SITE_ID"></script>
+```
+
+Open the test page with `?utm_source=search&utm_campaign=repair`, then simulate a call to the displayed pool number. The call log shows both attribution values. A browser tab keeps its assigned number for up to 30 minutes. When the pool is full or the lease expires, the page uses the fixed number. This test uses simulated calls. Connect real numbers and an HTTPS script origin before embedding on an HTTPS site.
+
 ## Buyer and publisher network
+
 
 Sign in and open `/network`. Add a buyer contract and publisher offer, preview a bid, submit a simulated call with a unique reference, and settle the call. The ledger shows revenue, payout, and margin. Buyer and publisher links show each partner’s own amounts.
 

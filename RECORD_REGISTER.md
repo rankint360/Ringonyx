@@ -32,4 +32,20 @@
 
 | 2026-11-11 | 25–32 | Built the local buyer and publisher console, partner statements, capacity-aware bidding, authenticated publisher ping/post, historical ranking, and suppression. | Integration tests exercised bid preview, capacity, duplicate submission, settlement, payout visibility, and workspace isolation. |
 
+| 2026-11-11 | 17 | Returned to Phase 2 and added workspace-scoped fallback routing plans and a next-destination preview. | Integration checks cover renter-to-fallback selection, workspace isolation, and viewer restrictions. |
+
+| 2026-11-11 | 16 | Added workspace-scoped phone menus with a spoken prompt, keypad options, and routing preview. | Integration checks cover valid and invalid keys, duplicate key rejection, and workspace access. |
+
+| 2026-11-11 | 14–15 | Added visitor number pools, a browser embed, and source and campaign snapshots for simulated calls. | Integration checks cover lease reuse, pool exhaustion, duplicate numbers, call attribution, and workspace isolation. |
+
+| 2026-11-11 | 18–20 | Added recording preferences with required disclosures, a callback request queue, and a simulated SMS inbox. | Integration checks cover disclosure validation, cancellation, SMS storage, and workspace isolation. |
+
+| 2026-11-11 | 16–17 | Connected keypad and fallback settings to simulated calls. Recorded routing decisions and charged only calls sent to the assigned renter. | Integration checks cover keypad selection, invalid input, fallback destinations, and billing isolation. |
+
+| 2026-11-11 | 18 | Applied recording preferences to simulated calls and saved the disclosure and consent decision at arrival. | Integration checks cover consent granted, declined, missing, invalid, and disabled, plus persistence after preference changes. |
+
+| 2026-11-11 | 11, 13 | Added workspace-scoped provisioning and port request drafts, duplicate prevention, and cancellation. | Integration checks cover validation, draft reuse, cancellation, and access restrictions. Browser walkthrough verified sign-in, site creation, and saving and canceling a provisioning draft. |
+
+| 2026-11-11 | 11–20 | Completed local Phase 2 acceptance in an isolated workspace. | Browser checks passed for cross-origin number insertion, campaign attribution, IVR and fallback simulation, recording consent, callback cancellation, and the SMS inbox. Integration tests passed for workspace isolation, read-only roles, and retry handling. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

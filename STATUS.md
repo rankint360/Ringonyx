@@ -2,6 +2,8 @@
 
 Update this file after each feature. Record changes and verification in [RECORD_REGISTER.md](RECORD_REGISTER.md).
 
+Phase 2 local acceptance passed on 2026-11-11. Carrier integration and live acceptance remain deferred.
+
 | Phase | Step | Feature | Status |
 |---|---|---|---|
 | Foundation | 01 | Local server and persistent SQLite database | Implemented |
@@ -14,16 +16,16 @@ Update this file after each feature. Record changes and verification in [RECORD_
 | Billing | 08 | Idempotent per-call qualification and charge recording | Implemented |
 | Site rentals | 09 | Renter portal with scoped call and charge history | Implemented |
 | Foundation | 10 | Workspace sign-in, roles, and tenant isolation | Implemented and tested locally |
-| Calls | 11 | Carrier number provisioning | Pending |
+| Calls | 11 | Carrier number provisioning | Local area-code request drafts implemented; carrier purchase deferred |
 | Calls | 12 | Live forwarding and authenticated carrier callbacks | Implemented locally; carrier acceptance pending |
-| Calls | 13 | Number porting | Pending |
-| Attribution | 14 | Dynamic number insertion | Pending |
-| Attribution | 15 | Visitor and campaign attribution | Tracking-number source mapping implemented; visitor attribution pending |
-| Calls | 16 | IVR builder | Pending |
-| Calls | 17 | Fallback and ring-tree routing | Pending |
-| Calls | 18 | Recording and consent settings | Pending |
-| Calls | 19 | Browser callbacks | Pending |
-| Calls | 20 | Inbound SMS | Pending |
+| Calls | 13 | Number porting | Local number port request drafts implemented; carrier submission deferred |
+| Attribution | 14 | Dynamic number insertion | Local number pools, visitor leases, and embed script implemented; carrier-backed pools deferred |
+| Attribution | 15 | Visitor and campaign attribution | Local source and campaign capture verified on simulated calls |
+| Calls | 16 | IVR builder | Local keypad menus applied to call simulations; carrier execution deferred |
+| Calls | 17 | Fallback and ring-tree routing | Local ordered fallback applied to call simulations; carrier execution deferred |
+| Calls | 18 | Recording and consent settings | Local disclosure and consent decisions applied to simulated calls; audio capture and playback deferred |
+| Calls | 19 | Browser callbacks | Local request queue and cancellation implemented; dialing deferred |
+| Calls | 20 | Inbound SMS | Local simulated inbox implemented; carrier delivery deferred |
 | Billing | 21 | Recurring and hybrid rent | Local monthly rate schedules and invoice generation implemented |
 | Billing | 22 | Verified booking-based charges | Pending |
 | Billing | 23 | Invoice generation and delivery | Local per-call invoices implemented; external delivery pending |

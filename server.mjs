@@ -1,6 +1,9 @@
 import { accountAccess, initializeAccounts, provision } from './accounts.mjs';
 import { billing, initializeBilling } from './billing.mjs';
 import { network } from './network.mjs';
+import { routing } from './routing.mjs';
+import { attribution } from './attribution.mjs';
+import { communications } from './communications.mjs';
 import { enableNumber, initializeVoice, voiceHandler } from './voice.mjs';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
@@ -58,9 +61,14 @@ const routes = {
   renters: 'SELECT id, name, destination, portal FROM renters WHERE account=? ORDER BY name',
   assignments: 'SELECT a.* FROM assignments a JOIN sites s ON s.id=a.site WHERE s.account=? ORDER BY a.started DESC',
   calls: `SELECT c.*, s.name AS site_name, r.name AS renter_name,
-    COALESCE(ch.cents, 0) AS cents, cc.sid IS NOT NULL AS carrier FROM calls c JOIN sites s ON s.id=c.site
+    COALESCE(ch.cents, 0) AS cents, cc.sid IS NOT NULL AS carrier, ca.campaign, ca.number AS tracking_number,
+    sr.destination AS simulated_destination, sr.menu_status AS simulated_menu_status,
+    rd.disclosure AS simulated_disclosure, rd.decision AS simulated_recording_decision
+    FROM calls c JOIN sites s ON s.id=c.site
     LEFT JOIN assignments a ON a.id=c.assignment LEFT JOIN renters r ON r.id=a.renter
-    LEFT JOIN charges ch ON ch.call=c.id LEFT JOIN carrier_calls cc ON cc.call=c.id`
+    LEFT JOIN charges ch ON ch.call=c.id LEFT JOIN carrier_calls cc ON cc.call=c.id
+    LEFT JOIN call_attribution ca ON ca.call=c.id LEFT JOIN simulated_routes sr ON sr.call=c.id
+    LEFT JOIN simulated_recording_decisions rd ON rd.call=c.id`
 };
 const query = (sql, ...args) => db.prepare(sql).all(...args);
 const run = (sql, ...args) => db.prepare(sql).run(...args);
@@ -113,9 +121,12 @@ function write(entity, data, account) {
   const id = randomUUID();
   if (entity === 'sites') {
     const number = phone(data.number);
-    if (query('SELECT id FROM sites WHERE number=?', number).length) fail('Number already assigned', 409);
-    run('INSERT INTO sites (id, name, number, account) VALUES (?, ?, ?, ?)', id, required(data.name, 'site name'), number, account);
-    return { id };
+    const name = required(data.name, 'site name');
+    return transaction(() => {
+      if (query('SELECT id FROM sites WHERE number=?', number).length || tracking.contains(number)) fail('Number already assigned', 409);
+      run('INSERT INTO sites (id, name, number, account) VALUES (?, ?, ?, ?)', id, name, number, account);
+      return { id };
+    });
   }
   if (entity === 'renters') {
     run('INSERT INTO renters (id, name, destination, portal, account) VALUES (?, ?, ?, ?, ?)', id, required(data.name, 'renter name'), phone(data.destination), randomUUID(), account);
@@ -136,11 +147,32 @@ function write(entity, data, account) {
     });
   }
   if (entity === 'calls') {
-    const [site] = query('SELECT id FROM sites WHERE number=? AND account=?', phone(data.number), account);
-    if (!site) fail('Unknown tracking number', 404);
-    return arrive(site, required(data.source, 'source'));
+    const number = phone(data.number);
+    return transaction(() => {
+      const match = tracking.resolve(account, number);
+      if (match) {
+        const call = simulate(match, match.source ?? 'Unattributed', account, data);
+        tracking.snapshot(call.id, number, match);
+        return call;
+      }
+      const [site] = query('SELECT id FROM sites WHERE number=? AND account=?', number, account);
+      if (!site) fail('Unknown tracking number', 404);
+      return simulate(site, required(data.source, 'source'), account, data);
+    });
   }
   fail('Unknown endpoint', 404);
+}
+function simulate(site, source, account, data) {
+  const decision = routingPlans.preview(account, site.id, data.failed ?? [], data.digit);
+  const destination = decision.next?.destination ?? null;
+  const [assignment] = destination ? query(`SELECT a.id FROM assignments a JOIN renters r ON r.id=a.renter
+    WHERE a.site=? AND a.ended IS NULL AND r.destination=?`, site.id, destination) : [];
+  const id = randomUUID();
+  run('INSERT INTO calls VALUES (?, ?, ?, ?, ?, NULL, ?)', id, site.id, assignment?.id ?? null,
+    source, now(), destination ? 'pending' : 'unrouted');
+  routingPlans.snapshot(id, decision);
+  const recording = comms.simulateRecording(id, site.id, destination, data.recordingConsent);
+  return { id, destination, recording };
 }
 function arrive(site, source, live = false) {
   const [assignment] = query(`SELECT a.id, r.destination FROM assignments a
@@ -162,7 +194,7 @@ function complete(id, data, account) {
   if (!call) fail('Unknown call', 404);
   if (call.outcome === data.outcome && call.duration === duration) return { cents: call.cents };
   if (call.outcome !== 'pending') fail('Call cannot be finalized', 409);
-  const cents = data.outcome === 'answered' && duration >= call.minimum ? call.rate : 0;
+  const cents = call.assignment && data.outcome === 'answered' && duration >= call.minimum ? call.rate : 0;
   run('UPDATE calls SET outcome=?, duration=? WHERE id=?', data.outcome, duration, id);
   if (cents) run('INSERT INTO charges VALUES (?, ?)', id, cents);
   return { cents };
@@ -173,10 +205,14 @@ const handleVoice = voiceHandler({
 });
 const invoices = billing({ query, run, transaction, id: randomUUID, now, fail });
 const exchange = network(db, { query, run, transaction, fail, required, whole, phone, now });
+const routingPlans = routing(db, { query, run, transaction, required, phone, fail });
+const tracking = attribution(db, { query, run, transaction, fail, phone });
+const comms = communications(db, { query, run, fail, required, phone, now });
 const assets = {
   '/': ['home.html', 'text/html'],
   '/home.css': ['home.css', 'text/css'],
   '/home.js': ['home.js', 'text/javascript'],
+  '/tracking.js': ['tracking.js', 'text/javascript'],
   '/ringonyx-mark.svg': ['ringonyx-mark.svg', 'image/svg+xml'],
   '/ringonyx-icons.svg': ['ringonyx-icons.svg', 'image/svg+xml'],
   '/brand.css': ['brand.css', 'text/css'],
@@ -184,6 +220,7 @@ const assets = {
   '/brand/favicons/favicon-180.png': ['brand/favicons/favicon-180.png', 'image/png'],
   '/app': ['index.html', 'text/html'],
   '/network': ['index.html', 'text/html'],
+  '/communications': ['index.html', 'text/html'],
   '/partner': ['index.html', 'text/html'],
   '/portal': ['index.html', 'text/html'],
   '/app.js': ['app.js', 'text/javascript'],
@@ -199,6 +236,11 @@ const server = createServer(async (req, res) => {
   };
   try {
     const { pathname } = new URL(req.url, 'http://localhost');
+    const visitor = /^\/tracking\/([\w-]+)$/.exec(pathname);
+    if (visitor && req.method === 'POST') {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      return json(tracking.lease(visitor[1], await body(req)));
+    }
     if (await handleVoice(req, res, pathname)) return;
     if (req.method === 'POST' && req.headers.origin) {
       const expectedOrigin = (production ? 'https://' : 'http://') + req.headers.host;
@@ -237,6 +279,33 @@ const server = createServer(async (req, res) => {
       return json({ email: user.email, role: user.role, workspace: user.workspace });
     }
     if (req.method === 'POST' && user.role === 'viewer') fail('This account has read-only access.', 403);
+    if (req.method === 'GET' && pathname === '/api/communications') return json(comms.list(user.account));
+    if (req.method === 'POST' && pathname.startsWith('/api/communications/')) {
+      return json(comms.write(user.account, pathname.slice('/api/communications/'.length), await body(req)));
+    }
+    if (pathname === '/api/tracking-pool') {
+      if (req.method === 'GET') return json(tracking.list(user.account));
+      if (req.method === 'POST') {
+        const data = await body(req);
+        return json(tracking.add(user.account, required(data.site, 'site'), data.number), 201);
+      }
+      fail('Method not allowed.', 405);
+    }
+    if (req.method === 'GET' && pathname === '/api/routing') return json(routingPlans.list(user.account));
+    if (pathname === '/api/routing/menu') {
+      if (req.method === 'GET') return json(routingPlans.menus(user.account));
+      if (req.method === 'POST') {
+        const data = await body(req);
+        return json(routingPlans.saveMenu(user.account, required(data.site, 'site'), data));
+      }
+      fail('Method not allowed.', 405);
+    }
+    if (req.method === 'POST' && ['/api/routing', '/api/routing/preview'].includes(pathname)) {
+      const data = await body(req);
+      const site = required(data.site, 'site');
+      return json(pathname.endsWith('/preview') ? routingPlans.preview(user.account, site, data.failed ?? [], data.digit)
+        : routingPlans.save(user.account, site, data.routes));
+    }
     if (req.method === 'GET' && pathname === '/api/network') return json(exchange.list(user.account, user.role));
     if (req.method === 'POST' && pathname.startsWith('/api/network/')) {
       return json(exchange.write(user.account, pathname.slice('/api/network/'.length), await body(req)));

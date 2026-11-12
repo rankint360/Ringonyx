@@ -35,3 +35,4 @@ td:first-child, td:nth-last-child(-n+2) { font-family: var(--mono); }
 .sign-in { max-width: 420px; }
 .workspace-header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
 .workspace-header p, section > p > small { color: var(--mist); }
+textarea { width: 100%; resize: vertical; background: var(--ink); color: var(--frost); border: 1px solid var(--line); border-radius: var(--control-radius); padding: 8px; font: inherit; }
