@@ -23,6 +23,8 @@ test('qualified charges and history survive a renter handoff', async t => {
   assert.equal((await fetch(origin)).status, 200);
   await api('sites', undefined, 401, false);
   const number = '+16025550100';
+  await api('sites', { name: 'Malformed number', number: [number] }, 400);
+  await api('sites', { name: 'é'.repeat(8500), number }, 413);
   const site = await api('sites', { name: 'Phoenix plumbing', number });
   const first = await api('renters', { name: 'First', destination: '+16025550101' });
   const second = await api('renters', { name: 'Second', destination: '+16025550102' });

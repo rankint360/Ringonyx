@@ -70,7 +70,7 @@ Phase 8 local release preparation passed on 2026-11-12. The production-mode test
 | Operations | 50 | Audit log | Recent successful authenticated changes logged |
 | Operations | 51 | Health monitoring and backups | Local health endpoint and SQLite snapshot command implemented. Hosted monitoring deferred |
 | Release | 51a | Marketing homepage, interactive call walkthrough, and Ringonyx brand assets | Implemented |
-| Release | 52 | GitHub source publication | Release source and records prepared |
+| Release | 52 | GitHub source publication | Phases 1–8 published to main |
 | Release | 53 | Staging deployment | Deployment and rollback procedures documented. Hosted rollout deferred |
 | Release | 54 | Acceptance testing | Local tests passed. Hosted and live provider acceptance deferred |
 | Release | 55 | Public launch | Launch checks documented. Public rollout deferred |

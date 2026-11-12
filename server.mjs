@@ -12,6 +12,7 @@ import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { StringDecoder } from 'node:string_decoder';
 
 const path = process.env.RINGONYX_DB || 'data/ringonyx.sqlite';
 if (process.argv[2] === '--backup') {
@@ -112,7 +113,7 @@ function required(value, label) {
   return value.trim();
 }
 function phone(value) {
-  if (!/^\+[1-9]\d{7,14}$/.test(value)) fail('Use a phone number in international format');
+  if (typeof value !== 'string' || !/^\+[1-9]\d{7,14}$/.test(value)) fail('Use a phone number in international format');
   return value;
 }
 function whole(value, max) {
@@ -124,12 +125,18 @@ function billingPeriod(value) {
   return value;
 }
 async function readBody(req) {
+  const decoder = new StringDecoder('utf8');
+  let bytes = 0;
   let input = '';
-  for await (const part of req) {
-    input += part;
-    if (input.length > 16384) fail('Request too large', 413);
+  for await (const part of req.iterator({ destroyOnReturn: false })) {
+    bytes += part.length;
+    if (bytes > 16384) {
+      req.resume();
+      fail('Request too large', 413);
+    }
+    input += decoder.write(part);
   }
-  return input;
+  return input + decoder.end();
 }
 async function body(req) {
   const input = await readBody(req);

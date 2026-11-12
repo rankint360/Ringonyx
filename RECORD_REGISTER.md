@@ -64,4 +64,6 @@
 
 | 2026-11-12 | 52–55 | Prepared the release source and documented staging, acceptance, recovery, and rollback. Hardened SQLite snapshots against missing sources and destination collisions. | All three integration tests passed. A fresh production-mode server started from a snapshot and returned the original site and call records after owner login. Hosted staging, live provider acceptance, and launch remain deferred. |
 
+| 2026-11-12 | 01–55 | Reviewed the local workflows and release status. Tightened phone input validation and preserved UTF-8 across request chunks while enforcing the body limit in bytes. | All three integration tests passed, including new assertions for malformed phone input and oversized multibyte requests. Hosted and live provider checks remain deferred. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.
