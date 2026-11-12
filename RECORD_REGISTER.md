@@ -48,4 +48,10 @@
 
 | 2026-11-11 | 11–20 | Completed local Phase 2 acceptance in an isolated workspace. | Browser checks passed for cross-origin number insertion, campaign attribution, IVR and fallback simulation, recording consent, callback cancellation, and the SMS inbox. Integration tests passed for workspace isolation, read-only roles, and retry handling. |
 
+| 2026-11-11 | 22–24 | Added operator-verified booking charges, invoice inclusion, and dispute resolution with optional credits. | Integration tests cover duplicate booking and resolution requests, over-credit rejection, workspace access, and renter invoice visibility. |
+
+| 2026-11-11 | 21–24 | Added itemized invoices and payment and credit history to the operator console and renter portal. | All three integration tests passed, including booking line items and dispute credits in the renter portal. |
+
+| 2026-11-12 | 21–24 | Completed local Phase 3 billing acceptance. | In the browser, generated a $70 call and booking invoice, recorded a $20 payment and a $10 dispute credit, and verified the $40 balance and line items in the renter portal. Integration tests passed for rent schedules, retries, and workspace isolation. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

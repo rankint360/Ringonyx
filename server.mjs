@@ -319,9 +319,35 @@ const server = createServer(async (req, res) => {
       const data = await body(req);
       const cents = whole(data.cents, 1_000_000_000);
       if (!cents || !['payment', 'credit'].includes(data.kind)) fail('Choose a payment or credit and enter a positive amount.');
-      return json(invoices.apply(user.account, required(data.invoice, 'invoice'), {
-        cents, kind: data.kind, reference: required(data.reference, 'reference')
-      }));
+      const reference = required(data.reference, 'reference');
+      if (reference.startsWith('dispute:')) fail('Choose a different reference.');
+      return json(invoices.apply(user.account, required(data.invoice, 'invoice'), { cents, kind: data.kind, reference }));
+    }
+    if (pathname === '/api/bookings') {
+      if (req.method === 'GET') return json(invoices.bookings(user.account));
+      if (req.method === 'POST') {
+        const data = await body(req);
+        const cents = whole(data.cents, 1_000_000_000);
+        if (!cents) fail('Enter a positive booking charge.');
+        return json(invoices.verifyBooking(user.account, user.email ?? 'local operator', {
+          call: required(data.call, 'call'), reference: required(data.reference, 'booking reference'),
+          evidence: required(data.evidence, 'verification evidence'), cents
+        }), 201);
+      }
+      fail('Method not allowed.', 405);
+    }
+    if (pathname === '/api/disputes') {
+      if (req.method === 'GET') return json(invoices.disputes(user.account));
+      if (req.method === 'POST') {
+        const data = await body(req);
+        return json(invoices.openDispute(user.account, required(data.invoice, 'invoice'), required(data.reason, 'reason')), 201);
+      }
+      fail('Method not allowed.', 405);
+    }
+    if (pathname === '/api/disputes/resolve' && req.method === 'POST') {
+      const data = await body(req);
+      return json(invoices.resolveDispute(user.account, required(data.dispute, 'dispute'),
+        required(data.resolution, 'resolution'), whole(data.cents, 1_000_000_000)));
     }
     if (pathname === '/api/invoices') {
       if (req.method === 'GET') return json(invoices.list(user.account));

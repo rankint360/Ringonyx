@@ -4,6 +4,8 @@ Update this file after each feature. Record changes and verification in [RECORD_
 
 Phase 2 local acceptance passed on 2026-11-11. Carrier integration and live acceptance remain deferred.
 
+Phase 3 local billing passed integration tests and browser acceptance on 2026-11-12. External booking confirmation, invoice delivery, and payment processing remain deferred.
+
 | Phase | Step | Feature | Status |
 |---|---|---|---|
 | Foundation | 01 | Local server and persistent SQLite database | Implemented |
@@ -27,9 +29,9 @@ Phase 2 local acceptance passed on 2026-11-11. Carrier integration and live acce
 | Calls | 19 | Browser callbacks | Local request queue and cancellation implemented; dialing deferred |
 | Calls | 20 | Inbound SMS | Local simulated inbox implemented; carrier delivery deferred |
 | Billing | 21 | Recurring and hybrid rent | Local monthly rate schedules and invoice generation implemented |
-| Billing | 22 | Verified booking-based charges | Pending |
-| Billing | 23 | Invoice generation and delivery | Local per-call invoices implemented; external delivery pending |
-| Billing | 24 | Payment reconciliation and dispute adjustments | Local payment and credit entries implemented; dispute workflow pending |
+| Billing | 22 | Verified booking-based charges | Local operator verification and booking charges implemented; external booking confirmation deferred |
+| Billing | 23 | Invoice generation and delivery | Local call, rent, and booking invoices visible in renter portal; external delivery deferred |
+| Billing | 24 | Payment reconciliation and dispute adjustments | Local payment, credit, and dispute resolution implemented |
 | Network | 25 | Buyer contracts and portal | Implemented locally |
 | Network | 26 | Buyer coverage, caps and concurrency limits | Implemented for simulated calls |
 | Network | 27 | Publisher offers and portal | Implemented locally |

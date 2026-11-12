@@ -118,6 +118,32 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   await post(owner, 'invoices', { renter: renter.id, period: '2026-12' }, 409);
   await post(owner, 'rental-rates', { ...monthly, period: '2027-01', cents: 0 }, 200);
   await post(owner, 'invoices', { renter: renter.id, period: '2027-01' }, 409);
+  const booking = { call: call.id, reference: 'booking-001', evidence: 'Confirmed by dispatch', cents: 2500 };
+  await post(other, 'bookings', booking, 404);
+  await post(viewer, 'bookings', booking, 403);
+  const verified = await post(owner, 'bookings', booking);
+  assert.deepEqual(await post(owner, 'bookings', booking), verified);
+  await post(owner, 'bookings', { ...booking, cents: 3000 }, 409);
+  const bookingInvoice = await post(owner, 'invoices', { renter: renter.id });
+  assert.equal(bookingInvoice.cents, 2500);
+  await post(owner, 'invoices', { renter: renter.id }, 409);
+  const complaint = { invoice: bookingInvoice.id, reason: 'Service was rescheduled' };
+  await post(other, 'disputes', complaint, 404);
+  const dispute = await post(owner, 'disputes', complaint);
+  const portalInvoice = async () => (await api('portal/' + portal)).data.invoices.find(row => row.id === bookingInvoice.id);
+  assert.equal((await portalInvoice()).disputed, 1);
+  const resolution = { dispute: dispute.id, resolution: 'Partial credit approved', cents: 1000 };
+  await post(other, 'disputes/resolve', resolution, 404);
+  await post(owner, 'disputes/resolve', { ...resolution, cents: 2501 }, 409);
+  await post(owner, 'disputes/resolve', resolution, 200);
+  await post(owner, 'disputes/resolve', resolution, 200);
+  assert.equal((await portalInvoice()).applied, 1000);
+  assert.equal((await portalInvoice()).disputed, 0);
+  assert.equal((await portalInvoice()).bookings, 1);
+  assert.deepEqual((await portalInvoice()).lines.map(({ kind, reference, cents }) => ({ kind, reference, cents })),
+    [{ kind: 'booking', reference: 'booking-001', cents: 2500 }]);
+  assert.deepEqual((await portalInvoice()).entries.map(({ kind, cents }) => ({ kind, cents })),
+    [{ kind: 'credit', cents: 1000 }]);
   for (const path of ['sites', 'assignments', 'calls']) {
     assert.deepEqual((await api(path, { cookie: other })).data, []);
     assert.equal((await api(path, { cookie: viewer })).data.length, 1);

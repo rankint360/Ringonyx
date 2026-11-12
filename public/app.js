@@ -32,8 +32,14 @@ function invoiceList(invoices) {
     `<li>${escape(invoice.renter_name)} · ${escape(new Date(invoice.created).toLocaleDateString())}
       · ${invoice.calls} qualified calls · <strong>${money(invoice.cents)}</strong>
       · Balance ${money(invoice.cents - invoice.applied)}
+      ${invoice.bookings ? ' · Bookings ' + invoice.bookings : ''}
+      ${invoice.disputed ? ' · Disputed' : ''}
       ${invoice.period ? ' · ' + escape(invoice.period) + ' rent ' + money(invoice.rent) : ''}
-      <small>Invoice ${escape(invoice.id)}</small></li>`).join('') + '</ul>' : '<p>No invoices yet.</p>'}</section>`;
+      <details><summary>Invoice details</summary><small>Invoice ${escape(invoice.id)}</small>
+      <ul>${invoice.lines.map(line => `<li>${escape(line.kind)} · ${escape(line.reference)} · ${money(line.cents)}</li>`).join('')}</ul>
+      ${invoice.entries.length ? '<h3>Payments and credits</h3><ul>' + invoice.entries.map(entry =>
+        `<li>${escape(entry.kind)} · ${escape(new Date(entry.created).toLocaleDateString())} · ${money(entry.cents)}</li>`).join('') + '</ul>' : ''}
+      </details></li>`).join('') + '</ul>' : '<p>No invoices yet.</p>'}</section>`;
 }
 function networkTable(calls, partner = false) {
   if (!calls.length) return '<p>No calls yet.</p>';
@@ -115,11 +121,20 @@ async function render() {
     renderNetwork(document.querySelector('#dashboard'), await request('network'), canWrite);
     return;
   }
-  const [sites, renters, assignments, calls, invoices, routing, menus, trackingPool] = await Promise.all(
-    ['sites', 'renters', 'assignments', 'calls', 'invoices', 'routing', 'routing/menu', 'tracking-pool'].map(path => request(path))
+  const [sites, renters, assignments, calls, invoices, routing, menus, trackingPool, bookings, disputes] = await Promise.all(
+    ['sites', 'renters', 'assignments', 'calls', 'invoices', 'routing', 'routing/menu', 'tracking-pool', 'bookings', 'disputes'].map(path => request(path))
   );
   const pending = calls.filter(call => call.outcome === 'pending' && !call.carrier).map(call => ({ id: call.id, label: call.site_name + ' · ' + new Date(call.created).toLocaleTimeString() }));
   const dashboard = document.querySelector('#dashboard');
+  const bookingCalls = calls.filter(call => call.outcome === 'answered' && call.assignment).map(call => ({
+    ...call, label: call.site_name + ' · ' + new Date(call.created).toLocaleString()
+  }));
+  const invoiceOptions = invoices.map(invoice => ({ ...invoice,
+    label: invoice.renter_name + ' · ' + money(invoice.cents) + ' · ' + invoice.id.slice(0, 8)
+  }));
+  const openDisputes = disputes.filter(dispute => !dispute.resolved).map(dispute => ({
+    ...dispute, label: dispute.renter_name + ' · ' + dispute.reason
+  }));
   dashboard.innerHTML = (canWrite ? `<div class="grid">
     ${form('Tracking site', 'sites', field('name', 'Site name') + field('number', 'Tracking number', 'placeholder="+16025550100"'), 'Add site')}
     ${form('Renter', 'renters', field('name', 'Business name') + field('destination', 'Forwarding number', 'placeholder="+16025550101"'), 'Add renter')}
@@ -138,6 +153,13 @@ async function render() {
       field('cents', 'Monthly rent in cents', 'type="number" min="0"'), 'Save rent rate')}
     ${form('Create renter invoice', 'invoices', select('renter', 'Renter', renters, 'id', 'name') +
       '<label>Billing month (UTC, optional)<input name="period" type="month"></label>', 'Create invoice')}
+    ${form('Verify a booking charge', 'bookings', select('call', 'Answered call', bookingCalls, 'id', 'label') +
+      field('reference', 'Booking reference') + field('evidence', 'Evidence reviewed') +
+      field('cents', 'Charge in cents', 'type="number" min="1"'), 'Verify booking')}
+    ${form('Open an invoice dispute', 'disputes', select('invoice', 'Invoice', invoiceOptions, 'id', 'label') +
+      field('reason', 'Dispute reason'), 'Open dispute')}
+    ${form('Resolve a dispute', 'disputes/resolve', select('dispute', 'Open dispute', openDisputes, 'id', 'label') +
+      field('resolution', 'Resolution') + field('cents', 'Credit in cents', 'type="number" min="0" value="0"'), 'Resolve dispute')}
     ${form('Record payment or credit', 'invoice-entries',
       select('invoice', 'Open invoice', invoices.filter(invoice => invoice.cents > invoice.applied).map(invoice => ({
         ...invoice, label: invoice.renter_name + ' · ' + money(invoice.cents - invoice.applied)
@@ -163,7 +185,12 @@ async function render() {
       escape(row.destination) + '</p>').join('') || '<p>No phone menus configured.</p>') + '</section><section><h2>Visitor number pools</h2>' +
     (trackingPool.map(row => '<p>' + escape(sites.find(site => site.id === row.site)?.name) + ' · ' + escape(row.number) +
       ' · Site ID <code>' + escape(row.site) + '</code></p>').join('') || '<p>No visitor pool numbers configured.</p>') +
-    '</section>' + invoiceList(invoices));
+    '</section>' + invoiceList(invoices) + '<section><h2>Verified bookings</h2>' +
+    (bookings.map(row => '<p>' + escape(row.reference) + ' · ' + money(row.cents) + ' · ' +
+      escape(row.evidence) + ' · ' + (row.invoice ? 'Invoiced' : 'Unbilled') + '</p>').join('') || '<p>No verified bookings.</p>') +
+    '</section><section><h2>Invoice disputes</h2>' +
+    (disputes.map(row => '<p>' + escape(row.renter_name) + ' · ' + escape(row.reason) + ' · ' +
+      (row.resolved ? escape(row.resolution) + ' · Credit ' + money(row.credit) : 'Open') + '</p>').join('') || '<p>No disputes.</p>') + '</section>');
 }
 function renderCommunications(dashboard, sites, data, canWrite) {
   const site = select('site', 'Tracking site', sites, 'id', 'name');
