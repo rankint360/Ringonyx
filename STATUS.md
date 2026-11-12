@@ -6,6 +6,8 @@ Phase 2 local acceptance passed on 2026-11-11. Carrier integration and live acce
 
 Phase 3 local billing passed integration tests and browser acceptance on 2026-11-12. External booking confirmation, invoice delivery, and payment processing remain deferred.
 
+Phase 4 local network passed integration tests and browser acceptance on 2026-11-12. External buyer bids, live carrier routing, and payout transfers remain deferred.
+
 | Phase | Step | Feature | Status |
 |---|---|---|---|
 | Foundation | 01 | Local server and persistent SQLite database | Implemented |
@@ -39,7 +41,7 @@ Phase 3 local billing passed integration tests and browser acceptance on 2026-11
 | Network | 29 | Buyer ping/post and live bidding | Local bids and floors implemented; external buyer responses deferred |
 | Network | 30 | Publisher-side ping/post | Local authenticated endpoints implemented |
 | Network | 31 | Predictive routing | Local historical revenue ranking implemented |
-| Network | 32 | Traffic quality and suppression rules | Duplicate references and regional suppression implemented locally |
+| Network | 32 | Traffic quality and suppression rules | Duplicate reference protection, regional suppression, partner pauses, and routing decisions implemented locally |
 | Leads | 33 | Web form lead intake | Pending |
 | Leads | 34 | Chat lead intake | Pending |
 | Leads | 35 | Validation and deduplication | Pending |

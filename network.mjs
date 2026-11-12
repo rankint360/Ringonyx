@@ -25,14 +25,25 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       account TEXT NOT NULL REFERENCES accounts(id), region TEXT NOT NULL,
       PRIMARY KEY(account, region)
     );
+    CREATE TABLE IF NOT EXISTS network_pauses (
+      account TEXT NOT NULL REFERENCES accounts(id), kind TEXT NOT NULL,
+      party TEXT NOT NULL, PRIMARY KEY(account, kind, party)
+    );
+    CREATE TABLE IF NOT EXISTS network_decisions (
+      call TEXT PRIMARY KEY REFERENCES network_calls(id),
+      strategy TEXT NOT NULL, floor INTEGER NOT NULL, bid INTEGER,
+      outcome TEXT NOT NULL, reason TEXT NOT NULL
+    );
   `);
   const region = value => {
     const result = required(value, 'region').toUpperCase();
     if (!/^[A-Z]{2}$/.test(result)) fail('Use a two-letter region code.');
     return result;
   };
-  const details = `SELECT c.*, b.name AS buyer_name, o.name AS publisher_name
-    FROM network_calls c LEFT JOIN buyers b ON b.id=c.buyer JOIN publisher_offers o ON o.id=c.offer`;
+  const details = `SELECT c.*, b.name AS buyer_name, o.name AS publisher_name,
+    d.strategy, d.floor, d.bid, d.reason
+    FROM network_calls c LEFT JOIN buyers b ON b.id=c.buyer JOIN publisher_offers o ON o.id=c.offer
+    LEFT JOIN network_decisions d ON d.call=c.id`;
   const endpoints = {
     buyers(account, data) {
       const id = randomUUID();
@@ -55,6 +66,18 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       if (data.enabled === false) run('DELETE FROM network_suppression WHERE account=? AND region=?', account, code);
       else run('INSERT OR IGNORE INTO network_suppression VALUES (?, ?)', account, code);
       return { region: code };
+    },
+    pause(account, data) {
+      const kind = data.kind;
+      if (!['buyer', 'publisher'].includes(kind) || typeof data.paused !== 'boolean') fail('Choose a partner and a pause state.');
+      const party = required(data.party, 'partner');
+      const table = kind === 'buyer' ? 'buyers' : 'publisher_offers';
+      return transaction(() => {
+        if (!query('SELECT id FROM ' + table + ' WHERE id=? AND account=?', party, account).length) fail('Unknown partner.', 404);
+        if (data.paused) run('INSERT OR IGNORE INTO network_pauses VALUES (?, ?, ?)', account, kind, party);
+        else run('DELETE FROM network_pauses WHERE account=? AND kind=? AND party=?', account, kind, party);
+        return { party, paused: data.paused };
+      });
     }
   };
   function match(account, data, commit) {
@@ -68,25 +91,34 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     const reference = commit ? required(data.reference, 'call reference') : null;
     const [prior] = reference ? query('SELECT * FROM network_calls WHERE offer=? AND reference=?', offerId, reference) : [];
     if (prior) {
-      if (prior.region !== code) fail('Call reference already used for another region.', 409);
-      return { id: prior.id, outcome: prior.outcome, buyer: prior.buyer };
+      const [decision] = query('SELECT strategy, floor, outcome FROM network_decisions WHERE call=?', prior.id);
+      if (prior.region !== code || (decision && (decision.floor !== floor || decision.strategy !== strategy))) {
+        fail('Call reference already used for different routing inputs.', 409);
+      }
+      return { id: prior.id, outcome: decision?.outcome ?? prior.outcome, buyer: prior.buyer };
     }
     const timestamp = now();
     const suppressed = query('SELECT region FROM network_suppression WHERE account=? AND region=?', account, code).length > 0;
-    const candidates = suppressed ? [] : query(`SELECT b.*,
+    const paused = query("SELECT party FROM network_pauses WHERE account=? AND kind='publisher' AND party=?", account, offerId).length > 0;
+    const candidates = suppressed || paused ? [] : query(`SELECT b.*,
       (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.created>=?) AS daily,
       (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.outcome='pending') AS active,
       (SELECT AVG(c.revenue) FROM network_calls c WHERE c.buyer=b.id AND c.outcome IN ('answered','missed')) AS yield
-      FROM buyers b WHERE b.account=? AND b.region=? AND b.price>=?`, timestamp.slice(0,10), account, code, Math.max(floor, offer.payout))
-      .filter(buyer => buyer.daily < buyer.cap && buyer.active < buyer.concurrency);
-    candidates.sort((a, b) => (strategy === 'predictive' ? (b.yield ?? b.price) - (a.yield ?? a.price) : 0)
+      FROM buyers b WHERE b.account=? AND b.region=? AND b.price>=?
+      AND NOT EXISTS(SELECT 1 FROM network_pauses p WHERE p.account=b.account AND p.kind='buyer' AND p.party=b.id)`,
+    timestamp.slice(0,10), account, code, Math.max(floor, offer.payout));
+    const eligible = candidates.filter(buyer => buyer.daily < buyer.cap && buyer.active < buyer.concurrency);
+    eligible.sort((a, b) => (strategy === 'predictive' ? (b.yield ?? b.price) - (a.yield ?? a.price) : 0)
       || b.price - a.price || a.id.localeCompare(b.id));
-    const buyer = candidates[0];
-    const outcome = buyer ? 'pending' : suppressed ? 'suppressed' : 'unmatched';
-    if (!commit) return { outcome, buyer: buyer?.name ?? null, bid: buyer?.price ?? null };
+    const buyer = eligible[0];
+    const outcome = buyer ? 'pending' : suppressed || paused ? 'suppressed' : 'unmatched';
+    const reason = buyer ? 'Matched' : paused ? 'Publisher offer paused' : suppressed ? 'Region suppressed'
+      : candidates.length ? 'Buyer capacity reached' : 'No active buyer meets coverage and floor';
+    if (!commit) return { outcome, buyer: buyer?.name ?? null, bid: buyer?.price ?? null, reason };
     const id = randomUUID();
     run(`INSERT INTO network_calls (id, account, offer, buyer, reference, region, created, outcome)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, account, offerId, buyer?.id ?? null, reference, code, timestamp, outcome);
+    run('INSERT INTO network_decisions VALUES (?, ?, ?, ?, ?, ?)', id, strategy, floor, buyer?.price ?? null, outcome, reason);
     return { id, outcome, buyer: buyer?.id ?? null };
   }
   return {
@@ -115,7 +147,8 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
         delete row.api_token;
       }
       return { buyers, publishers, calls: query(details + ' WHERE c.account=? ORDER BY c.created DESC', account),
-        suppression: query('SELECT region FROM network_suppression WHERE account=? ORDER BY region', account) };
+        suppression: query('SELECT region FROM network_suppression WHERE account=? ORDER BY region', account),
+        pauses: query('SELECT kind, party FROM network_pauses WHERE account=?', account) };
     },
     write(account, action, data) {
       if (Object.hasOwn(endpoints, action)) return endpoints[action](account, data);

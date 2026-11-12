@@ -165,6 +165,16 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   const settlement = { call: submitted.id, seconds: 90, outcome: 'answered' };
   await post(other, 'network/complete', settlement, 404);
   assert.deepEqual(await post(owner, 'network/complete', settlement, 200), { revenue: 6000, payout: 2500 });
+  assert.deepEqual(await post(owner, 'network/post', { ...route, reference: 'call-1' }, 200), submitted);
+  await post(owner, 'network/post', { ...route, floor: 5000, reference: 'call-1' }, 409);
+  const pause = { kind: 'buyer', party: buyer.id, paused: true };
+  await post(other, 'network/pause', pause, 404);
+  await post(owner, 'network/pause', pause, 200);
+  assert.equal((await post(owner, 'network/ping', route, 200)).bid, null);
+  await post(owner, 'network/pause', { ...pause, paused: false }, 200);
+  await post(owner, 'network/pause', { kind: 'publisher', party: offer.id, paused: true }, 200);
+  assert.equal((await post(owner, 'network/ping', route, 200)).reason, 'Publisher offer paused');
+  await post(owner, 'network/pause', { kind: 'publisher', party: offer.id, paused: false }, 200);
   assert.deepEqual(await post(owner, 'network/complete', settlement, 200), { revenue: 6000, payout: 2500 });
   const network = (await api('network', { cookie: owner })).data;
   const publisher = network.publishers[0];

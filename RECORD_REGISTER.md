@@ -54,4 +54,6 @@
 
 | 2026-11-12 | 21–24 | Completed local Phase 3 billing acceptance. | In the browser, generated a $70 call and booking invoice, recorded a $20 payment and a $10 dispute credit, and verified the $40 balance and line items in the renter portal. Integration tests passed for rent schedules, retries, and workspace isolation. |
 
+| 2026-11-12 | 25–32 | Completed local network acceptance and added partner pause controls, routing decision logs, and stable responses to retried call submissions. | Browser checks confirmed pausing and resuming a buyer, call settlement, and separate buyer and publisher statements. Integration tests confirmed workspace isolation, capacity limits, and retry handling. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.
