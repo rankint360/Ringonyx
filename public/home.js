@@ -121,6 +121,19 @@ document.getElementById('dial-preview').addEventListener('click', () => {
   setText('dial-result', /^\d{10,15}$/.test(digits) ? 'Sample callback to ' + digits + '. No call placed.' : 'Enter a phone number with 10 to 15 digits.');
 });
 const media = document.getElementById('recording-cost');
+for (const panel of document.querySelectorAll('[data-workflow]')) {
+  const controls = [...panel.querySelectorAll('button[data-case]')];
+  const scenes = [...panel.querySelectorAll('[data-scene]')];
+  function show(control) {
+    for (const button of controls) button.setAttribute('aria-pressed', String(button === control));
+    for (const scene of scenes) scene.hidden = scene.dataset.scene !== control.dataset.case;
+    const active = scenes.find(scene => !scene.hidden);
+    active.classList.remove('workflow-enter');
+    void active.offsetWidth;
+    active.classList.add('workflow-enter');
+  }
+  controls.forEach(control => control.addEventListener('click', () => show(control)));
+}
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 function updateCost() {
   const minutes = sliders[0].valueAsNumber * sliders[1].valueAsNumber;

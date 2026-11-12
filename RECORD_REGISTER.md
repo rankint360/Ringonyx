@@ -66,4 +66,6 @@
 
 | 2026-11-12 | 01–55 | Reviewed the local workflows and release status. Tightened phone input validation and preserved UTF-8 across request chunks while enforcing the body limit in bytes. | All three integration tests passed, including new assertions for malformed phone input and oversized multibyte requests. Hosted and live provider checks remain deferred. |
 
+| 2026-11-12 | 51a | Added animated buyer fallback, visitor attribution, and settlement scenarios to the homepage using Ringonyx brand colors. Restored the brand border token on the homepage. | Homepage served successfully, JavaScript syntax checked, and all three integration tests passed. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.
