@@ -63,10 +63,19 @@ function networkEvidence(call) {
     <p>${escape(call.strategy ?? 'Unknown strategy')} · Bid floor ${money(call.floor ?? 0)}</p>
     ${call.minimum == null ? '' : `<p>Minimum ${call.minimum} seconds · Connected ${call.seconds ?? '—'} seconds
       · Selected bid ${money(call.bid)} · Offered payout ${money(call.offered_payout)}</p>`}
+    ${call.invoice ? '<p>Invoice ' + escape(call.invoice) + '</p>' : ''}
     ${candidates.length ? '<ul>' + candidates.map(candidate =>
       `<li>${escape(candidate.name)} · ${money(candidate.bid)} · ${escape(candidate.decision)}
       ${candidate.expectedRevenue === null ? '' : ' · Expected revenue ' + money(candidate.expectedRevenue)}</li>`).join('') + '</ul>' : ''}
     </details></td></tr>`;
+}
+function networkInvoices(invoices) {
+  return '<section><h2>Buyer invoices</h2>' + (invoices.map(invoice =>
+    `<details><summary>${escape(invoice.buyer_name)} · ${escape(new Date(invoice.created).toLocaleDateString())}
+      · ${invoice.calls} calls · ${money(invoice.cents)}</summary>
+      <p>Invoice ${escape(invoice.id)}</p><ul>${invoice.lines.map(line =>
+        `<li>${escape(line.reference)} · ${money(line.cents)}</li>`).join('')}</ul></details>`
+  ).join('') || '<p>No buyer invoices yet.</p>') + '</section>';
 }
 function renderNetwork(dashboard, data, canWrite) {
   const integer = (name, label, value) => field(name, label, 'type="number" min="0" step="1" value="' + value + '"');
@@ -92,6 +101,7 @@ function renderNetwork(dashboard, data, canWrite) {
       integer('budget', 'Daily budget in cents (0 for unlimited)', 0), 'Save budget') +
     form('Record prepaid credit', 'network/credit', select('buyer', 'Buyer', data.buyers, 'id', 'name') +
       field('reference', 'Deposit reference') + integer('cents', 'Credit in cents', 5000), 'Record credit') +
+    form('Generate buyer invoice', 'network/invoices', select('buyer', 'Buyer', data.buyers, 'id', 'name'), 'Generate invoice') +
     form('Publisher offer', 'network/publishers', field('name', 'Offer name') + integer('payout', 'Payout in cents', 3000), 'Add offer') +
     form('Preview a bid', 'network/ping', bid, 'Preview match') +
     form('Submit a simulated call', 'network/post', bid + field('reference', 'Call reference'), 'Route call') +
@@ -111,7 +121,8 @@ function renderNetwork(dashboard, data, canWrite) {
     '</p></section></div><section><h2>Prepaid credit history</h2>' +
     (data.credits.map(row => '<p>' + escape(row.buyer_name) + ' · ' + escape(row.reference) +
       ' · ' + money(row.cents) + '</p>').join('') || '<p>No credits recorded.</p>') +
-    '</section><section><h2>Network call ledger</h2>' + networkTable(data.calls) + '</section>';
+    '</section>' + networkInvoices(data.invoices) +
+    '<section><h2>Network call ledger</h2>' + networkTable(data.calls) + '</section>';
 }
 async function render() {
   if (location.pathname === '/partner') {
@@ -123,7 +134,8 @@ async function render() {
     app.innerHTML = '<h1>' + escape(result.name) + '</h1><section><h2>' +
       (kind === 'buyer' ? 'Buyer charges' : 'Publisher payout statement') + '</h2><p>Total ' +
       money(total) + '</p>' + networkTable(result.calls, true) + '</section>' +
-      (kind === 'buyer' ? '<section><h2>Delivered leads</h2>' + leadTable(result.leads, true) + '</section>' : '');
+      (kind === 'buyer' ? networkInvoices(result.invoices) +
+        '<section><h2>Delivered leads</h2>' + leadTable(result.leads, true) + '</section>' : '');
     return;
   }
   if (location.pathname === '/portal') {

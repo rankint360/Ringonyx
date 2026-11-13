@@ -82,3 +82,5 @@ Post-audit follow-up adds optional daily buyer budgets with pending bid reservat
 Operators can edit existing buyer budgets and see reserved and settled amounts for the current UTC call day.
 
 Operators can record deposits against a buyer contract. The first deposit activates prepaid routing for that buyer, and later calls reserve or consume available credit. Payment collection remains pending.
+
+Network operators can generate itemized buyer invoices from settled charges. Buyers can view them in their scoped portals, and the call ledger shows the invoice reference. Buyer disputes and payment reconciliation remain pending.

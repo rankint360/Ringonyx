@@ -45,6 +45,15 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       call TEXT PRIMARY KEY REFERENCES network_calls(id),
       minimum INTEGER, payout INTEGER NOT NULL, candidates TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS network_invoices (
+      id TEXT PRIMARY KEY, buyer TEXT NOT NULL REFERENCES buyers(id), created TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS network_invoice_lines (
+      call TEXT PRIMARY KEY REFERENCES network_calls(id),
+      invoice TEXT NOT NULL REFERENCES network_invoices(id), cents INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS network_invoice_buyer ON network_invoices(buyer);
+    CREATE INDEX IF NOT EXISTS network_invoice_items ON network_invoice_lines(invoice);
   `);
   const region = value => {
     const result = required(value, 'region').toUpperCase();
@@ -52,15 +61,41 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     return result;
   };
   const details = `SELECT c.*, b.name AS buyer_name, o.name AS publisher_name,
-    d.strategy, d.floor, d.bid, d.reason, e.minimum, e.payout AS offered_payout, e.candidates
+    d.strategy, d.floor, d.bid, d.reason, e.minimum, e.payout AS offered_payout, e.candidates, il.invoice
     FROM network_calls c LEFT JOIN buyers b ON b.id=c.buyer JOIN publisher_offers o ON o.id=c.offer
-    LEFT JOIN network_decisions d ON d.call=c.id LEFT JOIN network_call_evidence e ON e.call=c.id`;
+    LEFT JOIN network_decisions d ON d.call=c.id LEFT JOIN network_call_evidence e ON e.call=c.id
+    LEFT JOIN network_invoice_lines il ON il.call=c.id`;
   const prepaidTotals = `
     (SELECT SUM(credit.cents) FROM network_buyer_credit credit WHERE credit.buyer=b.id) AS funded,
     (SELECT COALESCE(SUM(CASE WHEN c.outcome='pending' THEN COALESCE(d.bid,b.price) ELSE c.revenue END),0)
       FROM network_calls c LEFT JOIN network_decisions d ON d.call=c.id
       WHERE c.buyer=b.id AND c.created>=(SELECT MIN(created) FROM network_buyer_credit WHERE buyer=b.id)) AS credit_used`;
+  function invoices(column, value) {
+    return query(`SELECT i.id, i.created, b.name AS buyer_name,
+      SUM(l.cents) AS cents, COUNT(*) AS calls
+      FROM network_invoices i JOIN buyers b ON b.id=i.buyer
+      JOIN network_invoice_lines l ON l.invoice=i.id
+      WHERE b.${column}=? GROUP BY i.id ORDER BY i.created DESC, i.id`, value).map(invoice => ({
+      ...invoice,
+      lines: query(`SELECT c.reference, l.cents FROM network_invoice_lines l
+        JOIN network_calls c ON c.id=l.call WHERE l.invoice=? ORDER BY c.created, c.id`, invoice.id)
+    }));
+  }
   const endpoints = {
+    invoices(account, data) {
+      const buyer = required(data.buyer, 'buyer');
+      return transaction(() => {
+        if (!query('SELECT id FROM buyers WHERE id=? AND account=?', buyer, account).length) fail('Unknown buyer.', 404);
+        const calls = query(`SELECT c.id, c.revenue FROM network_calls c
+          LEFT JOIN network_invoice_lines l ON l.call=c.id
+          WHERE c.account=? AND c.buyer=? AND c.revenue>0 AND l.call IS NULL`, account, buyer);
+        if (!calls.length) fail('No uninvoiced buyer charges.', 409);
+        const id = randomUUID();
+        run('INSERT INTO network_invoices VALUES (?, ?, ?)', id, buyer, now());
+        for (const call of calls) run('INSERT INTO network_invoice_lines VALUES (?, ?, ?)', call.id, id, call.revenue);
+        return { id, calls: calls.length, cents: calls.reduce((total, call) => total + call.revenue, 0) };
+      });
+    },
     credit(account, data) {
       const buyer = required(data.buyer, 'buyer');
       const reference = required(data.reference, 'credit reference');
@@ -200,7 +235,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       const field = buyer ? 'c.revenue' : 'c.payout';
       const calls = query(`SELECT c.reference, c.region, c.created, c.outcome, c.seconds, ${field} AS cents
         FROM network_calls c WHERE ${buyer ? 'c.buyer' : 'c.offer'}=? ORDER BY c.created DESC`, party.id);
-      return { name: party.name, kind, calls };
+      return { name: party.name, kind, calls, ...(buyer ? { invoices: invoices('id', party.id) } : {}) };
     },
     list(account, role) {
       const buyers = query(`SELECT b.*, limits.daily_cents AS budget, ${prepaidTotals},
@@ -216,6 +251,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
         delete row.api_token;
       }
       return { buyers, publishers, calls: query(details + ' WHERE c.account=? ORDER BY c.created DESC', account),
+        invoices: invoices('account', account),
         credits: query(`SELECT credit.buyer, credit.reference, credit.cents, credit.created, b.name AS buyer_name
           FROM network_buyer_credit credit JOIN buyers b ON b.id=credit.buyer
           WHERE b.account=? ORDER BY credit.created DESC, credit.rowid DESC LIMIT 100`, account),

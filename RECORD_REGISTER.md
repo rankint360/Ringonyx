@@ -74,4 +74,6 @@
 
 | 2026-11-12 | 25–26 | Added operator-recorded prepaid deposits, credit history, available balance, and simulated routing enforcement. | Integration coverage includes workspace isolation, duplicate deposits, conflicting amounts, reservation, settlement, and replenishment. |
 
+| 2026-11-12 | 25, 28 | Added itemized network buyer invoices, buyer portal visibility, and invoice references on network calls. | Integration tests covered workspace and role restrictions, invoice totals, portal line items, and duplicate billing prevention. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

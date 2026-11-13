@@ -168,6 +168,18 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   const settlement = { call: submitted.id, seconds: 90, outcome: 'answered' };
   await post(other, 'network/complete', settlement, 404);
   assert.deepEqual(await post(owner, 'network/complete', settlement, 200), { revenue: 6000, payout: 2500 });
+  const invoiceInput = { buyer: buyer.id };
+  await post(other, 'network/invoices', invoiceInput, 404);
+  await post(viewer, 'network/invoices', invoiceInput, 403);
+  const buyerInvoice = await post(owner, 'network/invoices', invoiceInput, 200);
+  assert.equal(buyerInvoice.cents, 6000);
+  assert.equal(buyerInvoice.calls, 1);
+  await post(owner, 'network/invoices', invoiceInput, 409);
+  const invoiceNetwork = (await api('network', { cookie: owner })).data;
+  assert.equal(invoiceNetwork.calls.find(row => row.id === submitted.id).invoice, buyerInvoice.id);
+  const buyerToken = invoiceNetwork.buyers.find(row => row.id === buyer.id).token;
+  const buyerInvoices = (await api('network-portal/buyer/' + buyerToken)).data.invoices;
+  assert.deepEqual(buyerInvoices[0].lines, [{ reference: 'call-1', cents: 6000 }]);
   assert.deepEqual(await post(owner, 'network/post', { ...route, reference: 'call-1' }, 200), submitted);
   await post(owner, 'network/post', { ...route, floor: 5000, reference: 'call-1' }, 409);
   const pause = { kind: 'buyer', party: buyer.id, paused: true };
