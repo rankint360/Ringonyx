@@ -52,6 +52,17 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     FROM network_calls c LEFT JOIN buyers b ON b.id=c.buyer JOIN publisher_offers o ON o.id=c.offer
     LEFT JOIN network_decisions d ON d.call=c.id LEFT JOIN network_call_evidence e ON e.call=c.id`;
   const endpoints = {
+    budget(account, data) {
+      const id = required(data.buyer, 'buyer');
+      const budget = whole(data.budget, 100000000);
+      return transaction(() => {
+        if (!query('SELECT id FROM buyers WHERE id=? AND account=?', id, account).length) fail('Unknown buyer.', 404);
+        if (budget === 0) run('DELETE FROM network_buyer_budgets WHERE buyer=?', id);
+        else run(`INSERT INTO network_buyer_budgets VALUES (?, ?)
+          ON CONFLICT(buyer) DO UPDATE SET daily_cents=excluded.daily_cents`, id, budget);
+        return { id, budget: budget || null };
+      });
+    },
     buyers(account, data) {
       const id = randomUUID();
       const cap = whole(data.cap, 100000);
@@ -167,8 +178,13 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       return { name: party.name, kind, calls };
     },
     list(account, role) {
-      const buyers = query(`SELECT b.*, limits.daily_cents AS budget FROM buyers b
-        LEFT JOIN network_buyer_budgets limits ON limits.buyer=b.id WHERE b.account=? ORDER BY b.name`, account);
+      const buyers = query(`SELECT b.*, limits.daily_cents AS budget,
+        COALESCE(SUM(CASE WHEN c.outcome='pending' THEN COALESCE(d.bid,b.price) ELSE 0 END),0) AS reserved,
+        COALESCE(SUM(c.revenue),0) AS spent
+        FROM buyers b LEFT JOIN network_buyer_budgets limits ON limits.buyer=b.id
+        LEFT JOIN network_calls c ON c.buyer=b.id AND c.created>=?
+        LEFT JOIN network_decisions d ON d.call=c.id
+        WHERE b.account=? GROUP BY b.id ORDER BY b.name`, now().slice(0,10), account);
       const publishers = query('SELECT * FROM publisher_offers WHERE account=? ORDER BY name', account);
       if (role === 'viewer') for (const row of [...buyers, ...publishers]) {
         delete row.token;

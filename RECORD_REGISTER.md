@@ -70,4 +70,6 @@
 
 | 2026-11-12 | 08–09, 26–32 | Added optional daily buyer budgets, stored candidate decisions and settlement terms, and surfaced renter billing rules and invoice references in call details. | Verified budget reservation, release on a missed call, saved candidate evidence, and scoped invoice linkage in the integration suite. |
 
+| 2026-11-12 | 25–26 | Added budget editing for existing buyer contracts and visible daily reserved and spent amounts. | Integration tests verified that changes affect routing, reservations appear in the console API, and viewers and other workspaces cannot edit the budget. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

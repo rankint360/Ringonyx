@@ -365,6 +365,15 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   const budgetRoute = { ...route, region: 'NV', floor: 0 };
   const reserved = await post(owner, 'network/post', { ...budgetRoute, reference: 'budget-1' }, 200);
   assert.equal(reserved.buyer, limited.id);
+  const buyerBudget = { buyer: limited.id, budget: 10000 };
+  await post(other, 'network/budget', buyerBudget, 404);
+  await post(viewer, 'network/budget', buyerBudget, 403);
+  await post(owner, 'network/budget', buyerBudget, 200);
+  assert.equal((await post(owner, 'network/ping', budgetRoute, 200)).bid, 5000);
+  await post(owner, 'network/budget', { ...buyerBudget, budget: 5000 }, 200);
+  const buyerUsage = (await api('network', { cookie: owner })).data.buyers.find(row => row.id === limited.id);
+  assert.equal(buyerUsage.reserved, 5000);
+  assert.equal(buyerUsage.spent, 0);
   assert.equal((await post(owner, 'network/ping', budgetRoute, 200)).reason, 'Buyer budget reached');
   await post(owner, 'network/complete', { call: reserved.id, outcome: 'missed', seconds: 0 }, 200);
   assert.equal((await post(owner, 'network/ping', budgetRoute, 200)).bid, 5000);

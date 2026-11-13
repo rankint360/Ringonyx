@@ -78,13 +78,17 @@ function renderNetwork(dashboard, data, canWrite) {
   const partnerList = (kind, rows) => rows.map(row => '<p>' + (canWrite
     ? '<a href="/partner?kind=' + kind + '&token=' + encodeURIComponent(row.token) + '">' + escape(row.name) + '</a>'
     : escape(row.name)) + (data.pauses.some(pause => pause.kind === kind && pause.party === row.id) ? ' · Paused' : '') +
-    '</p>' + (row.api_token ? '<details><summary>Publisher API token</summary><code>' +
+    '</p>' + (kind === 'buyer' ? '<p>Daily budget ' + (row.budget === null ? 'Unlimited' : money(row.budget)) +
+      ' · Reserved ' + money(row.reserved) + ' · Spent ' + money(row.spent) + ' (UTC)</p>' : '') +
+    (row.api_token ? '<details><summary>Publisher API token</summary><code>' +
       escape(row.api_token) + '</code></details>' : '')).join('') || '<p>None yet.</p>';
   dashboard.innerHTML = (canWrite ? '<div class="grid">' +
     form('Buyer contract', 'network/buyers', field('name', 'Buyer name') + field('destination', 'Destination number') + region +
       integer('price', 'Bid in cents', 6000) + integer('minimum', 'Minimum connected seconds', 90) +
       integer('cap', 'Daily cap', 20) + integer('concurrency', 'Concurrent calls', 2) +
       integer('budget', 'Daily budget in cents (0 for unlimited)', 0), 'Add buyer') +
+    form('Edit buyer budget', 'network/budget', select('buyer', 'Buyer', data.buyers, 'id', 'name') +
+      integer('budget', 'Daily budget in cents (0 for unlimited)', 0), 'Save budget') +
     form('Publisher offer', 'network/publishers', field('name', 'Offer name') + integer('payout', 'Payout in cents', 3000), 'Add offer') +
     form('Preview a bid', 'network/ping', bid, 'Preview match') +
     form('Submit a simulated call', 'network/post', bid + field('reference', 'Call reference'), 'Route call') +

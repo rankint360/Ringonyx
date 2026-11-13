@@ -78,3 +78,5 @@ Phase 8 local release preparation passed on 2026-11-12. The production-mode test
 The local slice covers a tracked call from simulated arrival through qualified charge and renter handoff. Live forwarding and customer-ready billing remain open.
 
 Post-audit follow-up adds optional daily buyer budgets with pending bid reservations, saved network routing and settlement evidence, and renter call details linked to invoices. Live provider work and the remaining account, routing, and billing features are pending.
+
+Operators can edit existing buyer budgets and see reserved and settled amounts for the current UTC call day.
