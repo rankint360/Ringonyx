@@ -54,6 +54,11 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     );
     CREATE INDEX IF NOT EXISTS network_invoice_buyer ON network_invoices(buyer);
     CREATE INDEX IF NOT EXISTS network_invoice_items ON network_invoice_lines(invoice);
+    CREATE TABLE IF NOT EXISTS network_invoice_entries (
+      invoice TEXT NOT NULL REFERENCES network_invoices(id), reference TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('payment','credit')), cents INTEGER NOT NULL CHECK(cents>0),
+      created TEXT NOT NULL, PRIMARY KEY(invoice, reference)
+    );
     CREATE TABLE IF NOT EXISTS network_invoice_disputes (
       invoice TEXT PRIMARY KEY REFERENCES network_invoices(id),
       reason TEXT NOT NULL, opened TEXT NOT NULL, resolution TEXT, resolved TEXT
@@ -76,17 +81,41 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       WHERE c.buyer=b.id AND c.created>=(SELECT MIN(created) FROM network_buyer_credit WHERE buyer=b.id)) AS credit_used`;
   function invoices(column, value) {
     return query(`SELECT i.id, i.created, b.name AS buyer_name,
+      COALESCE((SELECT SUM(cents) FROM network_invoice_entries WHERE invoice=i.id),0) AS applied,
       SUM(l.cents) AS cents, COUNT(*) AS calls, d.reason, d.opened, d.resolution, d.resolved
       FROM network_invoices i JOIN buyers b ON b.id=i.buyer
       JOIN network_invoice_lines l ON l.invoice=i.id
       LEFT JOIN network_invoice_disputes d ON d.invoice=i.id
       WHERE b.${column}=? GROUP BY i.id ORDER BY i.created DESC, i.id`, value).map(invoice => ({
       ...invoice,
+      entries: query('SELECT reference, kind, cents, created FROM network_invoice_entries WHERE invoice=? ORDER BY created, reference', invoice.id),
       lines: query(`SELECT c.reference, l.cents FROM network_invoice_lines l
         JOIN network_calls c ON c.id=l.call WHERE l.invoice=? ORDER BY c.created, c.id`, invoice.id)
     }));
   }
   const endpoints = {
+    'invoice-entry'(account, data) {
+      const invoice = required(data.invoice, 'invoice');
+      const reference = required(data.reference, 'entry reference');
+      const cents = whole(data.cents, 100000000);
+      const { kind } = data;
+      if (!cents || !['payment', 'credit'].includes(kind)) fail('Choose a payment or credit and enter a positive amount.');
+      return transaction(() => {
+        const [record] = query(`SELECT
+          (SELECT SUM(cents) FROM network_invoice_lines WHERE invoice=i.id) AS total,
+          COALESCE((SELECT SUM(cents) FROM network_invoice_entries WHERE invoice=i.id),0) AS applied
+          FROM network_invoices i JOIN buyers b ON b.id=i.buyer WHERE i.id=? AND b.account=?`, invoice, account);
+        if (!record) fail('Unknown buyer invoice.', 404);
+        const [prior] = query('SELECT kind, cents FROM network_invoice_entries WHERE invoice=? AND reference=?', invoice, reference);
+        if (prior) {
+          if (prior.kind !== kind || prior.cents !== cents) fail('Entry reference already used.', 409);
+          return { invoice, reference, kind, cents };
+        }
+        if (cents > record.total - record.applied) fail('Amount exceeds invoice balance.', 409);
+        run('INSERT INTO network_invoice_entries VALUES (?, ?, ?, ?, ?)', invoice, reference, kind, cents, now());
+        return { invoice, reference, kind, cents };
+      });
+    },
     dispute(account, data) {
       const invoice = required(data.invoice, 'invoice');
       const reason = required(data.reason, 'dispute reason');

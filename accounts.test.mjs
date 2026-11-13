@@ -193,6 +193,18 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   assert.equal(disputedBuyerInvoice.reason, networkComplaint.reason);
   assert.equal(disputedBuyerInvoice.resolution, networkResolution.resolution);
   assert.ok(disputedBuyerInvoice.resolved);
+  const buyerPayment = { invoice: buyerInvoice.id, reference: 'buyer-payment-1', cents: 2000, kind: 'payment' };
+  await post(other, 'network/invoice-entry', buyerPayment, 404);
+  await post(viewer, 'network/invoice-entry', buyerPayment, 403);
+  await post(owner, 'network/invoice-entry', buyerPayment, 200);
+  await post(owner, 'network/invoice-entry', buyerPayment, 200);
+  await post(owner, 'network/invoice-entry', { ...buyerPayment, cents: 3000 }, 409);
+  const buyerAdjustment = { ...buyerPayment, reference: 'buyer-credit-1', kind: 'credit' };
+  await post(owner, 'network/invoice-entry', { ...buyerAdjustment, cents: 4001 }, 409);
+  await post(owner, 'network/invoice-entry', { ...buyerAdjustment, cents: 500 }, 200);
+  const reconciledInvoice = (await api('network-portal/buyer/' + buyerToken)).data.invoices[0];
+  assert.equal(reconciledInvoice.cents - reconciledInvoice.applied, 3500);
+  assert.equal(reconciledInvoice.entries.length, 2);
   assert.deepEqual(await post(owner, 'network/post', { ...route, reference: 'call-1' }, 200), submitted);
   await post(owner, 'network/post', { ...route, floor: 5000, reference: 'call-1' }, 409);
   const pause = { kind: 'buyer', party: buyer.id, paused: true };

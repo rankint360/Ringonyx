@@ -72,12 +72,15 @@ function networkEvidence(call) {
 function networkInvoices(invoices) {
   return '<section><h2>Buyer invoices</h2>' + (invoices.map(invoice =>
     `<details><summary>${escape(invoice.buyer_name)} · ${escape(new Date(invoice.created).toLocaleDateString())}
-      · ${invoice.calls} calls · ${money(invoice.cents)}</summary>
+      · ${invoice.calls} calls · ${money(invoice.cents)} · Due ${money(invoice.cents - invoice.applied)}</summary>
       <p>Invoice ${escape(invoice.id)}</p>
       ${invoice.reason ? '<p>Dispute ' + (invoice.resolved ? 'resolved' : 'open') + ' · ' + escape(invoice.reason) + '</p>' : ''}
       ${invoice.resolution ? '<p>Resolution · ' + escape(invoice.resolution) + '</p>' : ''}
       <ul>${invoice.lines.map(line =>
-        `<li>${escape(line.reference)} · ${money(line.cents)}</li>`).join('')}</ul></details>`
+        `<li>${escape(line.reference)} · ${money(line.cents)}</li>`).join('')}</ul>
+      ${invoice.entries.length ? '<h3>Payments and credits</h3><ul>' + invoice.entries.map(entry =>
+        `<li>${escape(entry.kind)} · ${escape(entry.reference)} · ${money(entry.cents)}</li>`).join('') + '</ul>' : ''}
+      </details>`
   ).join('') || '<p>No buyer invoices yet.</p>') + '</section>';
 }
 function renderNetwork(dashboard, data, canWrite) {
@@ -105,6 +108,10 @@ function renderNetwork(dashboard, data, canWrite) {
     form('Record prepaid credit', 'network/credit', select('buyer', 'Buyer', data.buyers, 'id', 'name') +
       field('reference', 'Deposit reference') + integer('cents', 'Credit in cents', 5000), 'Record credit') +
     form('Generate buyer invoice', 'network/invoices', select('buyer', 'Buyer', data.buyers, 'id', 'name'), 'Generate invoice') +
+    form('Record buyer payment or credit', 'network/invoice-entry',
+      select('invoice', 'Invoice', data.invoices.filter(row => row.cents > row.applied), 'id', 'id') +
+      '<label>Entry type<select name="kind"><option value="payment">Payment</option><option value="credit">Credit</option></select></label>' +
+      field('reference', 'Payment or credit reference') + integer('cents', 'Amount in cents', 0), 'Record entry') +
     form('Record buyer dispute', 'network/dispute', select('invoice', 'Invoice', data.invoices.filter(row => !row.opened), 'id', 'id') +
       field('reason', 'Reason', 'maxlength="200"'), 'Record dispute') +
     form('Resolve buyer dispute', 'network/resolve-dispute',

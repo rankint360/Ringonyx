@@ -78,4 +78,6 @@
 
 | 2026-11-12 | 25, 28 | Added operator-managed network invoice disputes and buyer portal visibility. | Integration tests verified workspace isolation, viewer restrictions, resolution retries, and buyer visibility. |
 
+| 2026-11-12 | 24–25, 28 | Added manual network invoice reconciliation with payment and credit references, entry history, and outstanding balances. | Integration tests covered workspace and viewer restrictions, duplicate retries, conflicting references, and prevention of entries above the balance. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

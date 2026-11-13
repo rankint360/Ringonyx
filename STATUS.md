@@ -83,4 +83,4 @@ Operators can edit existing buyer budgets and see reserved and settled amounts f
 
 Operators can record deposits against a buyer contract. The first deposit activates prepaid routing for that buyer, and later calls reserve or consume available credit. Payment collection remains pending.
 
-Network operators can generate itemized buyer invoices from settled charges and record and resolve invoice disputes. Buyers can view invoices and dispute outcomes in their scoped portals. Buyer self-service dispute submission, financial adjustments, and payment reconciliation remain pending.
+Network operators can generate itemized buyer invoices, record and resolve disputes, and apply manual payments and credits. Buyers can see entries and the amount due in their scoped portals. Self-service dispute submission and payment collection remain pending.
