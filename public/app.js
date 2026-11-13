@@ -27,12 +27,17 @@ function history(calls, operator) {
       <p>${call.qualification_minimum == null ? 'No renter billing rule was assigned.' :
         'Agreed rate ' + money(call.agreed_rate) + ' · Minimum ' + call.qualification_minimum + ' seconds'}</p>
       <p>${call.invoice ? 'Invoice ' + escape(call.invoice) : 'No invoice line yet'} · Charge ${money(call.cents)}</p>
+      ${operator && call.routing_steps ? '<ul>' + JSON.parse(call.routing_steps).map(step =>
+        '<li>' + escape(step.label) + ' · ' + escape(step.reason || (step.attempted ? 'Failed' : 'Available')) + '</li>'
+      ).join('') + '</ul>' : ''}
       </details></td></tr>`).join('')}</tbody></table></div>
     ${calls.length ? '' : '<p>No calls yet.</p>'}</section>`;
 }
 const field = (name, label, options = '') => `<label>${label}<input name="${name}" required ${options}></label>`;
 const select = (name, label, items, value, caption) => `<label>${label}<select required name="${name}"><option value="">Select</option>${items.map(item => `<option value="${escape(item[value])}">${escape(item[caption])}</option>`).join('')}</select></label>`;
 const form = (title, action, fields, button) => `<section><h2>${title}</h2><form data-action="${action}">${fields}<button>${button}</button></form></section>`;
+const routingScenario = '<label>Primary renter status<select name="scenario"><option value="normal">Available</option>' +
+  '<option value="busy">Busy</option><option value="no-answer">No answer</option><option value="after-hours">After hours</option></select></label>';
 function invoiceList(invoices) {
   return `<section><h2>Invoices</h2>${invoices.length ? '<ul>' + invoices.map(invoice =>
     `<li>${escape(invoice.renter_name)} · ${escape(new Date(invoice.created).toLocaleDateString())}
@@ -118,6 +123,8 @@ function renderNetwork(dashboard, data, canWrite) {
       select('invoice', 'Invoice', data.invoices.filter(row => row.opened && !row.resolved), 'id', 'id') +
       field('resolution', 'Resolution', 'maxlength="200"'), 'Resolve dispute') +
     form('Publisher offer', 'network/publishers', field('name', 'Offer name') + integer('payout', 'Payout in cents', 3000), 'Add offer') +
+    form('Publisher quality rule', 'network/quality', offer +
+      integer('limit', 'Missed calls per UTC day before pause (0 disables)', 0), 'Save rule') +
     form('Preview a bid', 'network/ping', bid, 'Preview match') +
     form('Submit a simulated call', 'network/post', bid + field('reference', 'Call reference'), 'Route call') +
     form('Settle a simulated call', 'network/complete', select('call', 'Pending call', pending, 'id', 'reference') +
@@ -150,14 +157,35 @@ async function render() {
       (kind === 'buyer' ? 'Buyer charges' : 'Publisher payout statement') + '</h2><p>Total ' +
       money(total) + '</p>' + networkTable(result.calls, true) + '</section>' +
       (kind === 'buyer' ? networkInvoices(result.invoices) +
+        (result.invoices.some(row => !row.opened) ? form('Dispute an invoice',
+          'network-portal/buyer/' + encodeURIComponent(portal),
+          select('invoice', 'Invoice', result.invoices.filter(row => !row.opened), 'id', 'id') +
+          field('reason', 'Reason', 'maxlength="200"'), 'Submit dispute') : '') +
         '<section><h2>Delivered leads</h2>' + leadTable(result.leads, true) + '</section>' : '');
     return;
   }
   if (location.pathname === '/portal') {
-    if (!portal) throw Error('Open the portal link provided by your operator.');
-    const result = await request('portal/' + encodeURIComponent(portal));
+    const invite = new URLSearchParams(location.hash.slice(1)).get('invite');
+    if (invite) {
+      app.innerHTML = '<h1>Accept renter invitation</h1>' + form('Create your password', 'renter-accept',
+        '<input type="hidden" name="invite" value="' + escape(invite) + '">' +
+        field('password', 'Password', 'type="password" minlength="14" autocomplete="new-password"'), 'Accept invitation');
+      return;
+    }
+    let result;
+    try {
+      result = await request(portal ? 'portal/' + encodeURIComponent(portal) : 'renter-portal');
+    } catch (error) {
+      if (error.status !== 401) throw error;
+      app.innerHTML = '<h1>Renter sign-in</h1><form id="access">' +
+        field('email', 'Email', 'type="email" autocomplete="username"') +
+        field('password', 'Password', 'type="password" autocomplete="current-password"') + '<button>Sign in</button></form>';
+      return;
+    }
     applyPortalBrand(result.brand);
-    app.innerHTML = '<h1>' + escape(result.renter) + '</h1>' + history(result.calls, false) + invoiceList(result.invoices);
+    app.innerHTML = '<h1>' + escape(result.renter) + '</h1>' +
+      (portal ? '' : '<form id="sign-out"><button>Sign out</button></form>') +
+      history(result.calls, false) + invoiceList(result.invoices);
     return;
   }
   let session;
@@ -169,6 +197,10 @@ async function render() {
       ${field('email', 'Email', 'type="email" autocomplete="username"')}
       ${field('password', 'Password', 'type="password" autocomplete="current-password"')}
       <button>Sign in</button></form></section>`;
+    return;
+  }
+  if (session.role === 'renter') {
+    location.replace('/portal');
     return;
   }
   const canWrite = session.role !== 'viewer';
@@ -214,6 +246,8 @@ async function render() {
     ...dispute, label: dispute.renter_name + ' · ' + dispute.reason
   }));
   dashboard.innerHTML = (canWrite ? `<div class="grid">
+    ${session.role === 'owner' ? form('Invite a renter', 'renter-invite',
+      select('renter', 'Renter', renters, 'id', 'name') + field('email', 'Email', 'type="email"'), 'Create invitation') : ''}
     ${form('Tracking site', 'sites', field('name', 'Site name') + field('number', 'Tracking number', 'placeholder="+16025550100"'), 'Add site')}
     ${form('Renter', 'renters', field('name', 'Business name') + field('destination', 'Forwarding number', 'placeholder="+16025550101"'), 'Add renter')}
     ${form('Connect a tracking number', 'voice/numbers', select('site','Site',sites,'id','name') + field('source','Campaign source','placeholder="Google Ads"'), 'Save number mapping')}
@@ -223,7 +257,7 @@ async function render() {
       '<label>Destinations in order, one per line as Label | +number<textarea name="routes" rows="3" placeholder="Backup desk | +16025550102"></textarea></label>', 'Replace fallback plan')}
     ${form('Preview routing', 'routing/preview', select('site', 'Site', sites, 'id', 'name') +
       '<label>Caller key (optional)<input name="digit" inputmode="numeric" maxlength="1"></label>' +
-      '<label>Failed destinations, one per line<textarea name="failed" rows="2"></textarea></label>', 'Find next destination')}
+      routingScenario + '<label>Failed destinations, one per line<textarea name="failed" rows="2"></textarea></label>', 'Find next destination')}
     ${form('Phone menu', 'routing/menu', select('site', 'Site', sites, 'id', 'name') + field('prompt', 'Spoken prompt') +
       '<label>Options, one per line as Digit | Label | +number<textarea name="options" rows="3" required placeholder="1 | Sales | +16025550102"></textarea></label>', 'Save phone menu')}
     ${form('Set monthly rent', 'rental-rates', select('renter', 'Renter', renters, 'id', 'name') +
@@ -250,7 +284,7 @@ async function render() {
     }))], 'number','name') + field('source','Attribution source for fixed numbers','value="Google Ads"') +
       '<label>Caller key (optional)<input name="digit" inputmode="numeric" maxlength="1"></label>' +
       '<label>Simulated recording consent<select name="recordingConsent"><option value="">No response</option><option value="granted">Granted</option><option value="declined">Declined</option></select></label>' +
-      '<label>Failed destinations (optional)<textarea name="failed" rows="2"></textarea></label>', 'Simulate arrival')}
+      routingScenario + '<label>Failed destinations (optional)<textarea name="failed" rows="2"></textarea></label>', 'Simulate arrival')}
     ${form('Simulate call completion', 'complete', select('id','Pending call',pending,'id','label') + field('duration','Talk time (seconds)','type="number" min="0" value="95"') + '<label>Outcome<select name="outcome"><option>answered</option><option>missed</option></select></label>', 'Finalize call')}
     </div>` : '') + `<div class="grid"><section><h2>Tracking sites</h2>${sites.map(site => `<p>${escape(site.name)} · ${escape(site.number)}<br><small>${escape(renters.find(renter => renter.id === assignments.find(row => row.site === site.id && !row.ended)?.renter)?.name || 'Unassigned')}</small></p>`).join('') || '<p>No sites yet.</p>'}</section>
     <section><h2>${canWrite ? 'Renter portals' : 'Renters'}</h2>${renters.map(renter => canWrite ? `<p><a href="/portal?token=${encodeURIComponent(renter.portal)}">${escape(renter.name)}</a></p>` : `<p>${escape(renter.name)}</p>`).join('') || '<p>No renters yet.</p>'}</section></div><section><h2>Assignment history</h2>${assignments.map(row => `<p>${escape(sites.find(site => site.id === row.site)?.name)} · ${escape(renters.find(renter => renter.id === row.renter)?.name)} · ${money(row.rate)} · ${row.minimum}s minimum <small>${escape(new Date(row.started).toLocaleString())} → ${row.ended ? escape(new Date(row.ended).toLocaleString()) : 'Active'}</small></p>`).join('') || '<p>No assignments yet.</p>'}</section>${history(calls, true)}`;
@@ -277,7 +311,13 @@ function leadTable(leads, partner = false) {
     [[lead.name, lead.email, lead.phone].filter(Boolean).join(' · '), lead.channel,
       [lead.source, lead.campaign].filter(Boolean).join(' · '), lead.region, lead.message,
       ...(partner ? [] : [lead.site_name, lead.buyer_name ? lead.buyer_name + ' · ' + lead.mode : 'Unassigned'])
-    ].map(value => '<td>' + escape(value) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+    ].map(value => '<td>' + escape(value) + '</td>').join('') + '</tr>' +
+    (partner ? '' : `<tr><td colspan="7"><details><summary>Lead details</summary>
+      <p>Reference ${escape(lead.id)} · Captured ${escape(new Date(lead.created).toLocaleString())}</p>
+      ${lead.delivered ? `<p>Delivered ${escape(new Date(lead.delivered).toLocaleString())} · ${escape(lead.buyer_name)}
+        · ${lead.bid == null ? 'Direct delivery' : 'Accepted bid ' + money(lead.bid)}
+        ${lead.quote ? ' · Quote ' + escape(lead.quote) : ''}</p>` : '<p>Awaiting buyer delivery.</p>'}
+      </details></td></tr>`)).join('') + '</tbody></table></div>';
 }
 function renderLeads(dashboard, sites, data, buyers, canWrite) {
   const pending = data.leads.filter(lead => !lead.delivered).map(lead => ({
@@ -394,6 +434,9 @@ function renderCommunications(dashboard, sites, data, canWrite) {
     ? '<ul>' + rows.map(row => '<li>' + escape(describe(row)) + '</li>').join('') + '</ul>'
     : '<p>No records yet.</p>';
   dashboard.innerHTML = (canWrite ? '<div class="grid">' +
+    form('Set up an existing tracking number', 'voice/setup', field('name', 'Site name') +
+      field('number', 'Number in international format', 'placeholder="+16025550100"') +
+      field('source', 'Campaign source'), 'Save site and number') +
     form('Prepare a number request', 'communications/numbers', site +
       '<label>Request type<select name="kind"><option value="provision">Provision a new number</option><option value="port">Port an existing number</option></select></label>' +
       field('requested', 'Area code or full port number', 'placeholder="602 or +16025550100"'), 'Save draft') +
@@ -428,7 +471,7 @@ app.addEventListener('submit', async event => {
     } else if (form.id === 'sign-out') {
       await request('logout', {});
     } else {
-      for (const key of ['rate', 'minimum', 'duration', 'cents', 'price', 'cap', 'concurrency', 'budget', 'payout', 'floor', 'seconds']) {
+      for (const key of ['rate', 'minimum', 'duration', 'cents', 'price', 'cap', 'concurrency', 'budget', 'payout', 'floor', 'seconds', 'limit']) {
         if (Object.hasOwn(data, key)) data[key] = Number(data[key]);
       }
       if (Object.hasOwn(data, 'enabled')) data.enabled = data.enabled === 'true';
@@ -449,6 +492,13 @@ app.addEventListener('submit', async event => {
         });
       }
       const result = await request(action === 'complete' ? 'calls/' + encodeURIComponent(data.id) + '/complete' : action, data);
+      if (action === 'renter-accept') {
+        window.history.replaceState(null, '', '/portal');
+      }
+      if (action === 'renter-invite') {
+        status.textContent = 'Share this invitation: ' + location.origin + '/portal#invite=' + result.invite;
+        return;
+      }
       if (['operations/key', 'operations/signing-key', 'operations/webhook-preview'].includes(action)) {
         await render();
         status.textContent = result.token ? 'Copy this developer key: ' + result.token

@@ -43,7 +43,7 @@ export function webLeads(db, { query, run, transaction, required, phone, whole, 
         WHERE s.account=? AND d.lead IS NULL AND q.expires>? ORDER BY q.expires DESC`, account, now());
     },
     list(account) {
-      return query(`SELECT l.*, s.name AS site_name, d.mode, d.cents AS bid, d.created AS delivered,
+      return query(`SELECT l.*, s.name AS site_name, d.mode, d.cents AS bid, d.created AS delivered, d.quote,
         b.name AS buyer_name FROM web_leads l JOIN sites s ON s.id=l.site
         LEFT JOIN lead_deliveries d ON d.lead=l.id LEFT JOIN buyers b ON b.id=d.buyer
         WHERE s.account=? ORDER BY l.created DESC, l.id`, account);

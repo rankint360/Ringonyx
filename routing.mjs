@@ -73,8 +73,9 @@ export function routing(db, { query, run, transaction, required, phone, fail }) 
       });
       return destinations(site);
     },
-    preview(account, site, failed, digit) {
+    preview(account, site, failed, digit, scenario = 'normal') {
       check(account, site);
+      if (!['normal', 'busy', 'no-answer', 'after-hours'].includes(scenario)) fail('Unknown routing scenario.');
       if (!Array.isArray(failed) || failed.length > 11) fail('Invalid failed destinations.');
       const attempted = new Set(failed.map(phone));
       const [renter] = query(`SELECT r.name AS label, r.destination FROM assignments a
@@ -92,7 +93,11 @@ export function routing(db, { query, run, transaction, required, phone, fail }) 
         if (seen.has(route.destination)) return false;
         seen.add(route.destination);
         return true;
-      }).map(route => ({ label: route.label, destination: route.destination, attempted: attempted.has(route.destination) }));
+      }).map(route => {
+        const reason = scenario !== 'normal' && route.destination === renter?.destination
+          ? scenario : attempted.has(route.destination) ? 'failed' : null;
+        return { label: route.label, destination: route.destination, attempted: reason !== null, reason };
+      });
       return { steps, next: steps.find(route => !route.attempted) ?? null, prompt: menu?.prompt ?? null,
         menuStatus: selected ? 'selected' : menu ? 'no-input' : 'disabled' };
     }

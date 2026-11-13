@@ -80,4 +80,6 @@
 
 | 2026-11-12 | 24–25, 28 | Added manual network invoice reconciliation with payment and credit references, entry history, and outstanding balances. | Integration tests covered workspace and viewer restrictions, duplicate retries, conflicting references, and prevention of entries above the balance. |
 
+| 2026-11-12 | Local follow-up | Added buyer dispute submission, renter invitations and sign-in, existing-number setup, fallback scenarios, publisher quality pauses, and lead details. | All three integration tests passed, including scoped access, single-use invitations, guided setup, fallback selection, and automatic pauses. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

@@ -77,6 +77,9 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   await post(owner, 'routing', plan, 200);
   const fallback = await post(owner, 'routing/preview', { site: site.id, failed: ['+16025550101'] }, 200);
   assert.equal(fallback.next.destination, '+16025550103');
+  const busyRoute = await post(owner, 'routing/preview', { site: site.id, scenario: 'busy' }, 200);
+  assert.equal(busyRoute.next.destination, '+16025550103');
+  assert.equal(busyRoute.steps[0].reason, 'busy');
   assert.deepEqual((await api('routing', { cookie: other })).data, []);
   const menu = { site: site.id, prompt: 'Press one for sales.', options: [
     { digit: '1', label: 'Sales', destination: '+16025550104' }
@@ -183,7 +186,8 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   const networkComplaint = { invoice: buyerInvoice.id, reason: 'Review call qualification' };
   await post(other, 'network/dispute', networkComplaint, 404);
   await post(viewer, 'network/dispute', networkComplaint, 403);
-  await post(owner, 'network/dispute', networkComplaint, 200);
+  await post(owner, 'network-portal/buyer/unknown-token', networkComplaint, 404);
+  await post(owner, 'network-portal/buyer/' + buyerToken, networkComplaint, 200);
   const networkResolution = { invoice: buyerInvoice.id, resolution: 'Call met the agreed minimum' };
   await post(other, 'network/resolve-dispute', networkResolution, 404);
   await post(owner, 'network/resolve-dispute', networkResolution, 200);
@@ -473,6 +477,27 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
       await exited;
     }
   }
+  const setup = await post(owner, 'voice/setup', {
+    name: 'Guided setup', number: '+16025550999', source: 'Referral'
+  });
+  assert.equal((await api('sites', { cookie: owner })).data.find(row => row.id === setup.id).voice_source, 'Referral');
+  const inviteData = { renter: renter.id, email: 'renter@example.test' };
+  await post(other, 'renter-invite', inviteData, 404);
+  const { invite } = await post(owner, 'renter-invite', inviteData, 200);
+  await post(undefined, 'renter-accept', { invite, password }, 200);
+  await post(undefined, 'renter-accept', { invite, password }, 404);
+  const renterSession = await signIn(inviteData.email);
+  await api('sites', { cookie: renterSession, status: 403 });
+  const signedInPortal = (await api('renter-portal', { cookie: renterSession })).data;
+  assert.equal(signedInPortal.renter, 'Renter');
+  assert.ok(signedInPortal.invoices.some(row => row.id === invoice.id));
+  await api('renter-portal', { cookie: owner, status: 401 });
+  await post(owner, 'network/quality', { offer: offer.id, limit: 1 }, 200);
+  await post(owner, 'network/credit', { ...credit, reference: 'deposit-3' }, 200);
+  const qualityCall = await post(owner, 'network/post', { ...budgetRoute, reference: 'quality-1' }, 200);
+  assert.equal(qualityCall.buyer, limited.id);
+  await post(owner, 'network/complete', { call: qualityCall.id, outcome: 'missed', seconds: 0 }, 200);
+  assert.equal((await post(owner, 'network/ping', budgetRoute, 200)).reason, 'Publisher offer paused');
   await post(owner, 'logout', {}, 200);
   await api('session', { cookie: owner, status: 401 });
 });

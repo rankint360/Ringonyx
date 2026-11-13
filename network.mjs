@@ -29,6 +29,9 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       account TEXT NOT NULL REFERENCES accounts(id), kind TEXT NOT NULL,
       party TEXT NOT NULL, PRIMARY KEY(account, kind, party)
     );
+    CREATE TABLE IF NOT EXISTS publisher_quality (
+      offer TEXT PRIMARY KEY REFERENCES publisher_offers(id), missed_limit INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS network_decisions (
       call TEXT PRIMARY KEY REFERENCES network_calls(id),
       strategy TEXT NOT NULL, floor INTEGER NOT NULL, bid INTEGER,
@@ -94,6 +97,14 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     }));
   }
   const endpoints = {
+    quality(account, data) {
+      const offer = required(data.offer, 'publisher offer');
+      const limit = whole(data.limit, 1000);
+      if (!query('SELECT id FROM publisher_offers WHERE id=? AND account=?', offer, account).length) fail('Unknown publisher offer.', 404);
+      run(`INSERT INTO publisher_quality VALUES (?, ?) ON CONFLICT(offer)
+        DO UPDATE SET missed_limit=excluded.missed_limit`, offer, limit);
+      return { offer, limit };
+    },
     'invoice-entry'(account, data) {
       const invoice = required(data.invoice, 'invoice');
       const reference = required(data.reference, 'entry reference');
@@ -280,6 +291,13 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     return { id, outcome, buyer: buyer?.id ?? null };
   }
   return {
+    buyerDispute(token, data) {
+      const invoice = required(data.invoice, 'invoice');
+      const [buyer] = query(`SELECT b.account FROM buyers b JOIN network_invoices i ON i.buyer=b.id
+        WHERE b.token=? AND i.id=?`, token, invoice);
+      if (!buyer) fail('Unknown buyer invoice.', 404);
+      return endpoints.dispute(buyer.account, data);
+    },
     publisherRequest(token, action, data) {
       const [offer] = query('SELECT id, account FROM publisher_offers WHERE api_token=?', token);
       if (!offer) fail('Unknown publisher offer.', 404);
@@ -305,7 +323,8 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
         LEFT JOIN network_calls c ON c.buyer=b.id AND c.created>=?
         LEFT JOIN network_decisions d ON d.call=c.id
         WHERE b.account=? GROUP BY b.id ORDER BY b.name`, now().slice(0,10), account);
-      const publishers = query('SELECT * FROM publisher_offers WHERE account=? ORDER BY name', account);
+      const publishers = query(`SELECT o.*, q.missed_limit FROM publisher_offers o
+        LEFT JOIN publisher_quality q ON q.offer=o.id WHERE o.account=? ORDER BY o.name`, account);
       if (role === 'viewer') for (const row of [...buyers, ...publishers]) {
         delete row.token;
         delete row.api_token;
@@ -336,6 +355,14 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
         const revenue = qualified ? (call.bid ?? buyer.price) : 0;
         const payout = qualified ? (call.offered_payout ?? offer.payout) : 0;
         run('UPDATE network_calls SET outcome=?, seconds=?, revenue=?, payout=? WHERE id=?', data.outcome, seconds, revenue, payout, call.id);
+        const [quality] = query('SELECT missed_limit FROM publisher_quality WHERE offer=?', call.offer);
+        if (data.outcome === 'missed' && quality?.missed_limit) {
+          const [activity] = query("SELECT COUNT(*) AS missed FROM network_calls WHERE offer=? AND outcome='missed' AND created>=?",
+            call.offer, now().slice(0, 10));
+          if (activity.missed >= quality.missed_limit) {
+            run("INSERT OR IGNORE INTO network_pauses VALUES (?, 'publisher', ?)", account, call.offer);
+          }
+        }
         return { revenue, payout };
       });
     }

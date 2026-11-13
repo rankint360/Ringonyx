@@ -20,6 +20,12 @@ export function initializeAccounts(db) {
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY, user TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS renter_users (
+      user TEXT PRIMARY KEY REFERENCES users(id), renter TEXT UNIQUE NOT NULL REFERENCES renters(id)
+    );
+    CREATE TABLE IF NOT EXISTS renter_invites (
+      token TEXT PRIMARY KEY, renter TEXT UNIQUE NOT NULL REFERENCES renters(id), email TEXT NOT NULL, expires INTEGER NOT NULL
+    );
   `);
   try {
     for (const table of ['sites', 'renters']) {
@@ -61,8 +67,9 @@ export function provision(db, { account, name, email, password, role }) {
 export function accountAccess(db, { secure }) {
   const attempts = new Map();
   const findUser = db.prepare(`SELECT u.*, a.name AS workspace FROM users u JOIN accounts a ON a.id=u.account WHERE u.email=?`);
-  const findSession = db.prepare(`SELECT u.id, u.email, u.account, u.role, a.name AS workspace
+  const findSession = db.prepare(`SELECT u.id, u.email, u.account, u.role, a.name AS workspace, ru.renter
     FROM sessions s JOIN users u ON u.id=s.user JOIN accounts a ON a.id=u.account
+    LEFT JOIN renter_users ru ON ru.user=u.id
     WHERE s.token=? AND s.expires>?`);
   const token = req => /(?:^|;\s*)ringonyx_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
   const cookie = (value, age) => cookieName + '=' + value + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + age + (secure ? '; Secure' : '');
@@ -76,6 +83,37 @@ export function accountAccess(db, { secure }) {
   }
   return {
     session,
+    invite(account, renter, email, fail) {
+      email = typeof email === 'string' ? email.trim().toLowerCase() : '';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) fail('Enter a valid email.');
+      if (!db.prepare('SELECT id FROM renters WHERE id=? AND account=?').get(renter, account)) fail('Unknown renter.', 404);
+      if (findUser.get(email) || db.prepare('SELECT user FROM renter_users WHERE renter=?').get(renter)) fail('Sign-in already exists.', 409);
+      const value = randomBytes(32).toString('hex');
+      db.prepare(`INSERT INTO renter_invites VALUES (?, ?, ?, ?)
+        ON CONFLICT(renter) DO UPDATE SET token=excluded.token, email=excluded.email, expires=excluded.expires`)
+        .run(digest(value), renter, email, Date.now() + 86400000);
+      return { invite: value };
+    },
+    accept(value, password, fail) {
+      if (typeof password !== 'string' || password.length < 14 || password.length > 256) fail('Use a password between 14 and 256 characters.');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const invite = db.prepare(`SELECT i.*, r.account FROM renter_invites i JOIN renters r ON r.id=i.renter
+          WHERE i.token=? AND i.expires>?`).get(digest(value), Date.now());
+        if (!invite) fail('Invalid or expired invitation.', 404);
+        if (findUser.get(invite.email)) fail('Sign-in already exists.', 409);
+        const id = randomUUID();
+        const salt = randomBytes(16).toString('hex');
+        db.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)').run(id, invite.account, invite.email, 'viewer', salt, derive(password, salt).toString('hex'));
+        db.prepare('INSERT INTO renter_users VALUES (?, ?)').run(id, invite.renter);
+        db.prepare('DELETE FROM renter_invites WHERE token=?').run(invite.token);
+        db.exec('COMMIT');
+        return { email: invite.email };
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
     login(req, res, data, fail) {
       const now = Date.now();
       for (const [key, entry] of attempts) if (entry.expires <= now) attempts.delete(key);

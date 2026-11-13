@@ -85,7 +85,7 @@ const routes = {
   calls: `SELECT c.*, s.name AS site_name, r.name AS renter_name,
     COALESCE(ch.cents, 0) AS cents, a.minimum AS qualification_minimum, a.rate AS agreed_rate,
     il.invoice, cc.sid IS NOT NULL AS carrier, ca.campaign, ca.number AS tracking_number,
-    sr.destination AS simulated_destination, sr.menu_status AS simulated_menu_status,
+    sr.destination AS simulated_destination, sr.menu_status AS simulated_menu_status, sr.steps AS routing_steps,
     rd.disclosure AS simulated_disclosure, rd.decision AS simulated_recording_decision
     FROM calls c JOIN sites s ON s.id=c.site
     LEFT JOIN assignments a ON a.id=c.assignment LEFT JOIN renters r ON r.id=a.renter
@@ -193,7 +193,7 @@ function write(entity, data, account) {
   fail('Unknown endpoint', 404);
 }
 function simulate(site, source, account, data) {
-  const decision = routingPlans.preview(account, site.id, data.failed ?? [], data.digit);
+  const decision = routingPlans.preview(account, site.id, data.failed ?? [], data.digit, data.scenario);
   const destination = decision.next?.destination ?? null;
   const [assignment] = destination ? query(`SELECT a.id FROM assignments a JOIN renters r ON r.id=a.renter
     WHERE a.site=? AND a.ended IS NULL AND r.destination=?`, site.id, destination) : [];
@@ -299,7 +299,14 @@ const server = createServer(async (req, res) => {
       return res.end(readFileSync(new URL('./public/' + file, import.meta.url)));
     }
     const portal = /^\/api\/portal\/([\w-]+)$/.exec(pathname);
+    if (req.method === 'POST' && pathname === '/api/renter-accept') {
+      const data = await body(req);
+      return json(access.accept(required(data.invite, 'invitation'), data.password, fail));
+    }
     const partner = /^\/api\/network-portal\/(buyer|publisher)\/([\w-]+)$/.exec(pathname);
+    if (req.method === 'POST' && partner?.[1] === 'buyer') {
+      return json(exchange.buyerDispute(partner[2], await body(req)));
+    }
     if (req.method === 'GET' && partner) {
       const result = exchange.portal(partner[1], partner[2]);
       const table = partner[1] === 'buyer' ? 'buyers' : 'publisher_offers';
@@ -316,10 +323,15 @@ const server = createServer(async (req, res) => {
       if (!token) fail('Publisher credentials required.', 401);
       return json(exchange.publisherRequest(token, publisherRequest[1], await body(req)));
     }
-    if (req.method === 'GET' && portal) {
-      const [renter] = query('SELECT id, name, account FROM renters WHERE portal=?', portal[1]);
+    if (req.method === 'GET' && (portal || pathname === '/api/renter-portal')) {
+      const renterId = access.session(req)?.renter;
+      if (!portal && !renterId) fail('Sign in as a renter to continue.', 401);
+      const [renter] = portal ? query('SELECT id, name, account FROM renters WHERE portal=?', portal[1])
+        : query('SELECT id, name, account FROM renters WHERE id=?', renterId);
       if (!renter) fail('Portal link not found', 404);
-      return json({ renter: renter.name, brand: ops.brand(renter.account), invoices: invoices.forRenter(renter.id), calls: query(routes.calls + ' WHERE a.renter=? AND s.account=? ORDER BY c.created DESC', renter.id, renter.account) });
+      const calls = query(routes.calls + ' WHERE a.renter=? AND s.account=? ORDER BY c.created DESC', renter.id, renter.account);
+      for (const call of calls) delete call.routing_steps;
+      return json({ renter: renter.name, brand: ops.brand(renter.account), invoices: invoices.forRenter(renter.id), calls });
     }
     if (req.method === 'POST' && pathname === '/api/login') {
       return json(access.login(req, res, await body(req), fail));
@@ -332,15 +344,21 @@ const server = createServer(async (req, res) => {
       ? { account: 'legacy', role: 'owner', workspace: 'Original workspace' } : null);
     if (!user) fail('Sign in to continue.', 401);
     if (req.method === 'GET' && pathname === '/api/session') {
-      return json({ email: user.email, role: user.role, workspace: user.workspace });
+      return json({ email: user.email, role: user.renter ? 'renter' : user.role, workspace: user.workspace });
     }
     if (req.method === 'POST' && user.role === 'viewer') fail('This account has read-only access.', 403);
+    if (user.renter) fail('Use your renter portal.', 403);
     if (req.method === 'POST' && pathname.startsWith('/api/')) {
       res.once('finish', () => {
         if (res.statusCode >= 300) return;
         try { ops.audit(user, pathname.replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, ':id')); }
         catch (error) { console.error('Audit record failed:', error.message); }
       });
+    }
+    if (req.method === 'POST' && pathname === '/api/renter-invite') {
+      if (user.role !== 'owner') fail('Workspace owner access required.', 403);
+      const data = await body(req);
+      return json(access.invite(user.account, required(data.renter, 'renter'), data.email, fail));
     }
     if (req.method === 'GET' && pathname === '/api/operations') return json(ops.read(user.account));
     if (req.method === 'POST' && pathname.startsWith('/api/operations/')) {
@@ -403,7 +421,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && ['/api/routing', '/api/routing/preview'].includes(pathname)) {
       const data = await body(req);
       const site = required(data.site, 'site');
-      return json(pathname.endsWith('/preview') ? routingPlans.preview(user.account, site, data.failed ?? [], data.digit)
+      return json(pathname.endsWith('/preview') ? routingPlans.preview(user.account, site, data.failed ?? [], data.digit, data.scenario)
         : routingPlans.save(user.account, site, data.routes));
     }
     if (req.method === 'GET' && pathname === '/api/network') return json(exchange.list(user.account, user.role));
@@ -457,6 +475,15 @@ const server = createServer(async (req, res) => {
         return json(invoices.create(user.account, required(data.renter, 'renter'), period), 201);
       }
       fail('Method not allowed.', 405);
+    }
+    if (req.method === 'POST' && pathname === '/api/voice/setup') {
+      const data = await body(req);
+      const source = required(data.source, 'source');
+      return json(transaction(() => {
+        const site = addSite(user.account, data);
+        enableNumber(db, site.id, source);
+        return { ...site, source };
+      }), 201);
     }
     if (req.method === 'POST' && pathname === '/api/voice/numbers') {
       const data = await body(req);
