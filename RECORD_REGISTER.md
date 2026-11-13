@@ -72,4 +72,6 @@
 
 | 2026-11-12 | 25–26 | Added budget editing for existing buyer contracts and visible daily reserved and spent amounts. | Integration tests verified that changes affect routing, reservations appear in the console API, and viewers and other workspaces cannot edit the budget. |
 
+| 2026-11-12 | 25–26 | Added operator-recorded prepaid deposits, credit history, available balance, and simulated routing enforcement. | Integration coverage includes workspace isolation, duplicate deposits, conflicting amounts, reservation, settlement, and replenishment. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

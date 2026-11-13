@@ -79,7 +79,8 @@ function renderNetwork(dashboard, data, canWrite) {
     ? '<a href="/partner?kind=' + kind + '&token=' + encodeURIComponent(row.token) + '">' + escape(row.name) + '</a>'
     : escape(row.name)) + (data.pauses.some(pause => pause.kind === kind && pause.party === row.id) ? ' · Paused' : '') +
     '</p>' + (kind === 'buyer' ? '<p>Daily budget ' + (row.budget === null ? 'Unlimited' : money(row.budget)) +
-      ' · Reserved ' + money(row.reserved) + ' · Spent ' + money(row.spent) + ' (UTC)</p>' : '') +
+      ' · Reserved ' + money(row.reserved) + ' · Spent ' + money(row.spent) + ' (UTC)</p>' +
+      (row.funded === null ? '' : '<p>Available prepaid credit ' + money(row.funded - row.credit_used) + '</p>') : '') +
     (row.api_token ? '<details><summary>Publisher API token</summary><code>' +
       escape(row.api_token) + '</code></details>' : '')).join('') || '<p>None yet.</p>';
   dashboard.innerHTML = (canWrite ? '<div class="grid">' +
@@ -89,6 +90,8 @@ function renderNetwork(dashboard, data, canWrite) {
       integer('budget', 'Daily budget in cents (0 for unlimited)', 0), 'Add buyer') +
     form('Edit buyer budget', 'network/budget', select('buyer', 'Buyer', data.buyers, 'id', 'name') +
       integer('budget', 'Daily budget in cents (0 for unlimited)', 0), 'Save budget') +
+    form('Record prepaid credit', 'network/credit', select('buyer', 'Buyer', data.buyers, 'id', 'name') +
+      field('reference', 'Deposit reference') + integer('cents', 'Credit in cents', 5000), 'Record credit') +
     form('Publisher offer', 'network/publishers', field('name', 'Offer name') + integer('payout', 'Payout in cents', 3000), 'Add offer') +
     form('Preview a bid', 'network/ping', bid, 'Preview match') +
     form('Submit a simulated call', 'network/post', bid + field('reference', 'Call reference'), 'Route call') +
@@ -105,7 +108,10 @@ function renderNetwork(dashboard, data, canWrite) {
     '</section><section><h2>Publisher offers</h2>' + partnerList('publisher', data.publishers) +
     '</section><section><h2>Suppressed regions</h2><p>' +
     (data.suppression.map(row => escape(row.region)).join(', ') || 'None') +
-    '</p></section></div><section><h2>Network call ledger</h2>' + networkTable(data.calls) + '</section>';
+    '</p></section></div><section><h2>Prepaid credit history</h2>' +
+    (data.credits.map(row => '<p>' + escape(row.buyer_name) + ' · ' + escape(row.reference) +
+      ' · ' + money(row.cents) + '</p>').join('') || '<p>No credits recorded.</p>') +
+    '</section><section><h2>Network call ledger</h2>' + networkTable(data.calls) + '</section>';
 }
 async function render() {
   if (location.pathname === '/partner') {

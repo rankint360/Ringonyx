@@ -37,6 +37,10 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     CREATE TABLE IF NOT EXISTS network_buyer_budgets (
       buyer TEXT PRIMARY KEY REFERENCES buyers(id), daily_cents INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS network_buyer_credit (
+      buyer TEXT NOT NULL REFERENCES buyers(id), reference TEXT NOT NULL,
+      cents INTEGER NOT NULL, created TEXT NOT NULL, PRIMARY KEY(buyer, reference)
+    );
     CREATE TABLE IF NOT EXISTS network_call_evidence (
       call TEXT PRIMARY KEY REFERENCES network_calls(id),
       minimum INTEGER, payout INTEGER NOT NULL, candidates TEXT NOT NULL
@@ -51,7 +55,25 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     d.strategy, d.floor, d.bid, d.reason, e.minimum, e.payout AS offered_payout, e.candidates
     FROM network_calls c LEFT JOIN buyers b ON b.id=c.buyer JOIN publisher_offers o ON o.id=c.offer
     LEFT JOIN network_decisions d ON d.call=c.id LEFT JOIN network_call_evidence e ON e.call=c.id`;
+  const prepaidTotals = `
+    (SELECT SUM(credit.cents) FROM network_buyer_credit credit WHERE credit.buyer=b.id) AS funded,
+    (SELECT COALESCE(SUM(CASE WHEN c.outcome='pending' THEN COALESCE(d.bid,b.price) ELSE c.revenue END),0)
+      FROM network_calls c LEFT JOIN network_decisions d ON d.call=c.id
+      WHERE c.buyer=b.id AND c.created>=(SELECT MIN(created) FROM network_buyer_credit WHERE buyer=b.id)) AS credit_used`;
   const endpoints = {
+    credit(account, data) {
+      const buyer = required(data.buyer, 'buyer');
+      const reference = required(data.reference, 'credit reference');
+      const cents = whole(data.cents, 100000000);
+      if (!cents) fail('Credit must be positive.');
+      return transaction(() => {
+        if (!query('SELECT id FROM buyers WHERE id=? AND account=?', buyer, account).length) fail('Unknown buyer.', 404);
+        const [prior] = query('SELECT cents FROM network_buyer_credit WHERE buyer=? AND reference=?', buyer, reference);
+        if (prior && prior.cents !== cents) fail('Credit reference already used with a different amount.', 409);
+        if (!prior) run('INSERT INTO network_buyer_credit VALUES (?, ?, ?, ?)', buyer, reference, cents, now());
+        return { buyer, reference, cents };
+      });
+    },
     budget(account, data) {
       const id = required(data.buyer, 'buyer');
       const budget = whole(data.budget, 100000000);
@@ -123,6 +145,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     const suppressed = query('SELECT region FROM network_suppression WHERE account=? AND region=?', account, code).length > 0;
     const paused = query("SELECT party FROM network_pauses WHERE account=? AND kind='publisher' AND party=?", account, offerId).length > 0;
     const candidates = suppressed || paused ? [] : query(`SELECT b.*, limits.daily_cents,
+      ${prepaidTotals},
       (SELECT COALESCE(SUM(CASE WHEN c.outcome='pending' THEN b.price ELSE c.revenue END), 0)
         FROM network_calls c WHERE c.buyer=b.id AND c.created>=?) AS committed,
       (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.created>=?) AS daily,
@@ -136,6 +159,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       if (buyer.daily >= buyer.cap) return 'Daily call cap reached';
       if (buyer.active >= buyer.concurrency) return 'Concurrent call cap reached';
       if (buyer.daily_cents !== null && buyer.committed + buyer.price > buyer.daily_cents) return 'Daily budget reached';
+      if (buyer.funded !== null && buyer.credit_used + buyer.price > buyer.funded) return 'Prepaid balance reached';
       return null;
     };
     const eligible = candidates.filter(buyer => !excluded(buyer));
@@ -145,7 +169,8 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     const outcome = buyer ? 'pending' : suppressed || paused ? 'suppressed' : 'unmatched';
     const reason = buyer ? 'Matched' : paused ? 'Publisher offer paused' : suppressed ? 'Region suppressed'
       : candidates.length && candidates.every(candidate => excluded(candidate) === 'Daily budget reached')
-        ? 'Buyer budget reached' : candidates.length ? 'Buyer capacity reached' : 'No active buyer meets coverage and floor';
+        ? 'Buyer budget reached' : candidates.length && candidates.every(candidate => excluded(candidate) === 'Prepaid balance reached')
+          ? 'Buyer prepaid balance reached' : candidates.length ? 'Buyer capacity reached' : 'No active buyer meets coverage and floor';
     if (!commit) return { outcome, buyer: buyer?.name ?? null, bid: buyer?.price ?? null, reason };
     const id = randomUUID();
     run(`INSERT INTO network_calls (id, account, offer, buyer, reference, region, created, outcome)
@@ -178,7 +203,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       return { name: party.name, kind, calls };
     },
     list(account, role) {
-      const buyers = query(`SELECT b.*, limits.daily_cents AS budget,
+      const buyers = query(`SELECT b.*, limits.daily_cents AS budget, ${prepaidTotals},
         COALESCE(SUM(CASE WHEN c.outcome='pending' THEN COALESCE(d.bid,b.price) ELSE 0 END),0) AS reserved,
         COALESCE(SUM(c.revenue),0) AS spent
         FROM buyers b LEFT JOIN network_buyer_budgets limits ON limits.buyer=b.id
@@ -191,6 +216,9 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
         delete row.api_token;
       }
       return { buyers, publishers, calls: query(details + ' WHERE c.account=? ORDER BY c.created DESC', account),
+        credits: query(`SELECT credit.buyer, credit.reference, credit.cents, credit.created, b.name AS buyer_name
+          FROM network_buyer_credit credit JOIN buyers b ON b.id=credit.buyer
+          WHERE b.account=? ORDER BY credit.created DESC, credit.rowid DESC LIMIT 100`, account),
         suppression: query('SELECT region FROM network_suppression WHERE account=? ORDER BY region', account),
         pauses: query('SELECT kind, party FROM network_pauses WHERE account=?', account) };
     },

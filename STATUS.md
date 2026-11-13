@@ -80,3 +80,5 @@ The local slice covers a tracked call from simulated arrival through qualified c
 Post-audit follow-up adds optional daily buyer budgets with pending bid reservations, saved network routing and settlement evidence, and renter call details linked to invoices. Live provider work and the remaining account, routing, and billing features are pending.
 
 Operators can edit existing buyer budgets and see reserved and settled amounts for the current UTC call day.
+
+Operators can record deposits against a buyer contract. The first deposit activates prepaid routing for that buyer, and later calls reserve or consume available credit. Payment collection remains pending.
