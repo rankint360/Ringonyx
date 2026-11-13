@@ -21,7 +21,13 @@ function history(calls, operator) {
       [call.source, call.campaign].filter(Boolean).join(' · '),
       operator && call.simulated_menu_status === 'invalid-digit' ? 'Unrouted · invalid keypad choice' :
         [call.outcome, operator && call.simulated_disclosure ? 'Recording consent: ' + call.simulated_recording_decision : ''].filter(Boolean).join(' · '),
-      call.duration ?? '—', money(call.cents)].map(value => '<td>' + escape(value) + '</td>').join('')}</tr>`).join('')}</tbody></table></div>
+      call.duration ?? '—', money(call.cents)].map(value => '<td>' + escape(value) + '</td>').join('')}</tr>
+      <tr><td colspan="7"><details><summary>Call details</summary>
+      <p>Call reference ${escape(call.id)} · ${escape(call.tracking_number || call.site_name)}</p>
+      <p>${call.qualification_minimum == null ? 'No renter billing rule was assigned.' :
+        'Agreed rate ' + money(call.agreed_rate) + ' · Minimum ' + call.qualification_minimum + ' seconds'}</p>
+      <p>${call.invoice ? 'Invoice ' + escape(call.invoice) : 'No invoice line yet'} · Charge ${money(call.cents)}</p>
+      </details></td></tr>`).join('')}</tbody></table></div>
     ${calls.length ? '' : '<p>No calls yet.</p>'}</section>`;
 }
 const field = (name, label, options = '') => `<label>${label}<input name="${name}" required ${options}></label>`;
@@ -48,7 +54,19 @@ function networkTable(calls, partner = false) {
     '</tr></thead><tbody>' + calls.map(call => '<tr>' +
       [call.reference, call.region, call.outcome, ...(partner ? [money(call.cents)] : [
         call.publisher_name, call.buyer_name || '—', call.reason || '—', money(call.revenue), money(call.payout), money(call.revenue - call.payout)
-      ])].map(value => '<td>' + escape(value) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+      ])].map(value => '<td>' + escape(value) + '</td>').join('') + '</tr>' +
+      (partner ? '' : networkEvidence(call))).join('') + '</tbody></table></div>';
+}
+function networkEvidence(call) {
+  const candidates = JSON.parse(call.candidates ?? '[]');
+  return `<tr><td colspan="9"><details><summary>Routing and settlement details</summary>
+    <p>${escape(call.strategy ?? 'Unknown strategy')} · Bid floor ${money(call.floor ?? 0)}</p>
+    ${call.minimum == null ? '' : `<p>Minimum ${call.minimum} seconds · Connected ${call.seconds ?? '—'} seconds
+      · Selected bid ${money(call.bid)} · Offered payout ${money(call.offered_payout)}</p>`}
+    ${candidates.length ? '<ul>' + candidates.map(candidate =>
+      `<li>${escape(candidate.name)} · ${money(candidate.bid)} · ${escape(candidate.decision)}
+      ${candidate.expectedRevenue === null ? '' : ' · Expected revenue ' + money(candidate.expectedRevenue)}</li>`).join('') + '</ul>' : ''}
+    </details></td></tr>`;
 }
 function renderNetwork(dashboard, data, canWrite) {
   const integer = (name, label, value) => field(name, label, 'type="number" min="0" step="1" value="' + value + '"');
@@ -65,7 +83,8 @@ function renderNetwork(dashboard, data, canWrite) {
   dashboard.innerHTML = (canWrite ? '<div class="grid">' +
     form('Buyer contract', 'network/buyers', field('name', 'Buyer name') + field('destination', 'Destination number') + region +
       integer('price', 'Bid in cents', 6000) + integer('minimum', 'Minimum connected seconds', 90) +
-      integer('cap', 'Daily cap', 20) + integer('concurrency', 'Concurrent calls', 2), 'Add buyer') +
+      integer('cap', 'Daily cap', 20) + integer('concurrency', 'Concurrent calls', 2) +
+      integer('budget', 'Daily budget in cents (0 for unlimited)', 0), 'Add buyer') +
     form('Publisher offer', 'network/publishers', field('name', 'Offer name') + integer('payout', 'Payout in cents', 3000), 'Add offer') +
     form('Preview a bid', 'network/ping', bid, 'Preview match') +
     form('Submit a simulated call', 'network/post', bid + field('reference', 'Call reference'), 'Route call') +
@@ -372,7 +391,7 @@ app.addEventListener('submit', async event => {
     } else if (form.id === 'sign-out') {
       await request('logout', {});
     } else {
-      for (const key of ['rate', 'minimum', 'duration', 'cents', 'price', 'cap', 'concurrency', 'payout', 'floor', 'seconds']) {
+      for (const key of ['rate', 'minimum', 'duration', 'cents', 'price', 'cap', 'concurrency', 'budget', 'payout', 'floor', 'seconds']) {
         if (Object.hasOwn(data, key)) data[key] = Number(data[key]);
       }
       if (Object.hasOwn(data, 'enabled')) data.enabled = data.enabled === 'true';

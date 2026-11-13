@@ -109,6 +109,8 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   assert.deepEqual((await api('invoices', { cookie: other })).data, []);
   const portal = (await api('renters', { cookie: owner })).data[0].portal;
   assert.equal((await api('portal/' + portal)).data.invoices[0].id, invoice.id);
+  assert.ok((await api('portal/' + portal)).data.calls.some(row =>
+    row.invoice === invoice.id && row.qualification_minimum === 90 && row.agreed_rate === 4500));
   assert.equal((await api('portal/' + portal)).data.invoices[0].applied, 4500);
   const monthly = { renter: renter.id, period: '2026-11', cents: 75000 };
   await post(other, 'rental-rates', monthly, 404);
@@ -356,6 +358,19 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   const exportResponse = await fetch(origin + '/api/exports/crm.csv', { headers: { Cookie: owner } });
   assert.match(await exportResponse.text(), /Web contact/);
   assert.equal((await fetch(origin + '/health')).status, 200);
+  const limited = await post(owner, 'network/buyers', {
+    name: 'Budget buyer', destination: '+16025550109', region: 'NV', price: 5000,
+    minimum: 90, cap: 10, concurrency: 10, budget: 5000
+  }, 200);
+  const budgetRoute = { ...route, region: 'NV', floor: 0 };
+  const reserved = await post(owner, 'network/post', { ...budgetRoute, reference: 'budget-1' }, 200);
+  assert.equal(reserved.buyer, limited.id);
+  assert.equal((await post(owner, 'network/ping', budgetRoute, 200)).reason, 'Buyer budget reached');
+  await post(owner, 'network/complete', { call: reserved.id, outcome: 'missed', seconds: 0 }, 200);
+  assert.equal((await post(owner, 'network/ping', budgetRoute, 200)).bid, 5000);
+  const evidence = (await api('network', { cookie: owner })).data.calls.find(row => row.id === reserved.id);
+  assert.equal(evidence.minimum, 90);
+  assert.equal(JSON.parse(evidence.candidates)[0].decision, 'Selected');
   const backupPath = join(directory, 'backup.sqlite');
   const snapshot = spawnSync(process.execPath, ['server.mjs', '--backup', backupPath], { env, encoding: 'utf8' });
   assert.equal(snapshot.status, 0, snapshot.stderr);

@@ -68,4 +68,6 @@
 
 | 2026-11-12 | 51a | Added animated buyer fallback, visitor attribution, and settlement scenarios to the homepage using Ringonyx brand colors. Restored the brand border token on the homepage. | Homepage served successfully, JavaScript syntax checked, and all three integration tests passed. |
 
+| 2026-11-12 | 08–09, 26–32 | Added optional daily buyer budgets, stored candidate decisions and settlement terms, and surfaced renter billing rules and invoice references in call details. | Verified budget reservation, release on a missed call, saved candidate evidence, and scoped invoice linkage in the integration suite. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

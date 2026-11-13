@@ -83,12 +83,14 @@ const routes = {
   renters: 'SELECT id, name, destination, portal FROM renters WHERE account=? ORDER BY name',
   assignments: 'SELECT a.* FROM assignments a JOIN sites s ON s.id=a.site WHERE s.account=? ORDER BY a.started DESC',
   calls: `SELECT c.*, s.name AS site_name, r.name AS renter_name,
-    COALESCE(ch.cents, 0) AS cents, cc.sid IS NOT NULL AS carrier, ca.campaign, ca.number AS tracking_number,
+    COALESCE(ch.cents, 0) AS cents, a.minimum AS qualification_minimum, a.rate AS agreed_rate,
+    il.invoice, cc.sid IS NOT NULL AS carrier, ca.campaign, ca.number AS tracking_number,
     sr.destination AS simulated_destination, sr.menu_status AS simulated_menu_status,
     rd.disclosure AS simulated_disclosure, rd.decision AS simulated_recording_decision
     FROM calls c JOIN sites s ON s.id=c.site
     LEFT JOIN assignments a ON a.id=c.assignment LEFT JOIN renters r ON r.id=a.renter
-    LEFT JOIN charges ch ON ch.call=c.id LEFT JOIN carrier_calls cc ON cc.call=c.id
+    LEFT JOIN charges ch ON ch.call=c.id LEFT JOIN invoice_lines il ON il.call=c.id
+    LEFT JOIN carrier_calls cc ON cc.call=c.id
     LEFT JOIN call_attribution ca ON ca.call=c.id LEFT JOIN simulated_routes sr ON sr.call=c.id
     LEFT JOIN simulated_recording_decisions rd ON rd.call=c.id`
 };

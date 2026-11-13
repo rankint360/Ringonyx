@@ -34,6 +34,13 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       strategy TEXT NOT NULL, floor INTEGER NOT NULL, bid INTEGER,
       outcome TEXT NOT NULL, reason TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS network_buyer_budgets (
+      buyer TEXT PRIMARY KEY REFERENCES buyers(id), daily_cents INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS network_call_evidence (
+      call TEXT PRIMARY KEY REFERENCES network_calls(id),
+      minimum INTEGER, payout INTEGER NOT NULL, candidates TEXT NOT NULL
+    );
   `);
   const region = value => {
     const result = required(value, 'region').toUpperCase();
@@ -41,19 +48,23 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     return result;
   };
   const details = `SELECT c.*, b.name AS buyer_name, o.name AS publisher_name,
-    d.strategy, d.floor, d.bid, d.reason
+    d.strategy, d.floor, d.bid, d.reason, e.minimum, e.payout AS offered_payout, e.candidates
     FROM network_calls c LEFT JOIN buyers b ON b.id=c.buyer JOIN publisher_offers o ON o.id=c.offer
-    LEFT JOIN network_decisions d ON d.call=c.id`;
+    LEFT JOIN network_decisions d ON d.call=c.id LEFT JOIN network_call_evidence e ON e.call=c.id`;
   const endpoints = {
     buyers(account, data) {
       const id = randomUUID();
       const cap = whole(data.cap, 100000);
       const concurrency = whole(data.concurrency, 10000);
       if (!cap || !concurrency) fail('Capacity limits must be positive.');
-      run('INSERT INTO buyers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', id, account,
-        required(data.name, 'buyer name'), phone(data.destination), region(data.region),
-        whole(data.price, 1000000), whole(data.minimum, 86400), cap, concurrency, randomUUID());
-      return { id };
+      const budget = whole(data.budget ?? 0, 100000000);
+      return transaction(() => {
+        run('INSERT INTO buyers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', id, account,
+          required(data.name, 'buyer name'), phone(data.destination), region(data.region),
+          whole(data.price, 1000000), whole(data.minimum, 86400), cap, concurrency, randomUUID());
+        if (budget) run('INSERT INTO network_buyer_budgets VALUES (?, ?)', id, budget);
+        return { id };
+      });
     },
     publishers(account, data) {
       const id = randomUUID();
@@ -100,25 +111,41 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     const timestamp = now();
     const suppressed = query('SELECT region FROM network_suppression WHERE account=? AND region=?', account, code).length > 0;
     const paused = query("SELECT party FROM network_pauses WHERE account=? AND kind='publisher' AND party=?", account, offerId).length > 0;
-    const candidates = suppressed || paused ? [] : query(`SELECT b.*,
+    const candidates = suppressed || paused ? [] : query(`SELECT b.*, limits.daily_cents,
+      (SELECT COALESCE(SUM(CASE WHEN c.outcome='pending' THEN b.price ELSE c.revenue END), 0)
+        FROM network_calls c WHERE c.buyer=b.id AND c.created>=?) AS committed,
       (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.created>=?) AS daily,
       (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.outcome='pending') AS active,
       (SELECT AVG(c.revenue) FROM network_calls c WHERE c.buyer=b.id AND c.outcome IN ('answered','missed')) AS yield
-      FROM buyers b WHERE b.account=? AND b.region=? AND b.price>=?
+      FROM buyers b LEFT JOIN network_buyer_budgets limits ON limits.buyer=b.id
+      WHERE b.account=? AND b.region=? AND b.price>=?
       AND NOT EXISTS(SELECT 1 FROM network_pauses p WHERE p.account=b.account AND p.kind='buyer' AND p.party=b.id)`,
-    timestamp.slice(0,10), account, code, Math.max(floor, offer.payout));
-    const eligible = candidates.filter(buyer => buyer.daily < buyer.cap && buyer.active < buyer.concurrency);
+    timestamp.slice(0,10), timestamp.slice(0,10), account, code, Math.max(floor, offer.payout));
+    const excluded = buyer => {
+      if (buyer.daily >= buyer.cap) return 'Daily call cap reached';
+      if (buyer.active >= buyer.concurrency) return 'Concurrent call cap reached';
+      if (buyer.daily_cents !== null && buyer.committed + buyer.price > buyer.daily_cents) return 'Daily budget reached';
+      return null;
+    };
+    const eligible = candidates.filter(buyer => !excluded(buyer));
     eligible.sort((a, b) => (strategy === 'predictive' ? (b.yield ?? b.price) - (a.yield ?? a.price) : 0)
       || b.price - a.price || a.id.localeCompare(b.id));
     const buyer = eligible[0];
     const outcome = buyer ? 'pending' : suppressed || paused ? 'suppressed' : 'unmatched';
     const reason = buyer ? 'Matched' : paused ? 'Publisher offer paused' : suppressed ? 'Region suppressed'
-      : candidates.length ? 'Buyer capacity reached' : 'No active buyer meets coverage and floor';
+      : candidates.length && candidates.every(candidate => excluded(candidate) === 'Daily budget reached')
+        ? 'Buyer budget reached' : candidates.length ? 'Buyer capacity reached' : 'No active buyer meets coverage and floor';
     if (!commit) return { outcome, buyer: buyer?.name ?? null, bid: buyer?.price ?? null, reason };
     const id = randomUUID();
     run(`INSERT INTO network_calls (id, account, offer, buyer, reference, region, created, outcome)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, account, offerId, buyer?.id ?? null, reference, code, timestamp, outcome);
     run('INSERT INTO network_decisions VALUES (?, ?, ?, ?, ?, ?)', id, strategy, floor, buyer?.price ?? null, outcome, reason);
+    const evidence = candidates.map(candidate => ({
+      name: candidate.name, bid: candidate.price,
+      expectedRevenue: strategy === 'predictive' ? Math.round(candidate.yield ?? candidate.price) : null,
+      decision: candidate === buyer ? 'Selected' : excluded(candidate) ?? 'Ranked below winner'
+    }));
+    run('INSERT INTO network_call_evidence VALUES (?, ?, ?, ?)', id, buyer?.minimum ?? null, offer.payout, JSON.stringify(evidence));
     return { id, outcome, buyer: buyer?.id ?? null };
   }
   return {
@@ -140,7 +167,8 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       return { name: party.name, kind, calls };
     },
     list(account, role) {
-      const buyers = query('SELECT * FROM buyers WHERE account=? ORDER BY name', account);
+      const buyers = query(`SELECT b.*, limits.daily_cents AS budget FROM buyers b
+        LEFT JOIN network_buyer_budgets limits ON limits.buyer=b.id WHERE b.account=? ORDER BY b.name`, account);
       const publishers = query('SELECT * FROM publisher_offers WHERE account=? ORDER BY name', account);
       if (role === 'viewer') for (const row of [...buyers, ...publishers]) {
         delete row.token;
@@ -164,9 +192,9 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
         if (call.outcome !== 'pending') fail('Call cannot be completed.', 409);
         const [buyer] = query('SELECT price, minimum FROM buyers WHERE id=?', call.buyer);
         const [offer] = query('SELECT payout FROM publisher_offers WHERE id=?', call.offer);
-        const qualified = data.outcome === 'answered' && seconds >= buyer.minimum;
-        const revenue = qualified ? buyer.price : 0;
-        const payout = qualified ? offer.payout : 0;
+        const qualified = data.outcome === 'answered' && seconds >= (call.minimum ?? buyer.minimum);
+        const revenue = qualified ? (call.bid ?? buyer.price) : 0;
+        const payout = qualified ? (call.offered_payout ?? offer.payout) : 0;
         run('UPDATE network_calls SET outcome=?, seconds=?, revenue=?, payout=? WHERE id=?', data.outcome, seconds, revenue, payout, call.id);
         return { revenue, payout };
       });
