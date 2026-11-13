@@ -84,4 +84,6 @@
 
 | 2026-11-12 | Local improvements | Added a dedicated call record, invoice-line navigation, shared activity, and expanded buyer routing evidence with predictive trials. | All three integration tests passed, including workspace isolation, invoice linkage, timeline events, and coverage exclusions. |
 
+| 2026-11-13 | 53 | Added a configurable bind address for Render staging. | All three local integration tests passed. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

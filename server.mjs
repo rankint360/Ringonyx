@@ -563,6 +563,7 @@ const server = createServer(async (req, res) => {
     json({ error: error.status ? error.message : 'Internal server error' }, error.status || 500);
   }
 });
-server.listen(Number(process.env.PORT ?? 3000), '127.0.0.1', () => {
-  console.log('Ringonyx listening on http://127.0.0.1:' + server.address().port);
+const host = process.env.RINGONYX_HOST || '127.0.0.1';
+server.listen(Number(process.env.PORT ?? 3000), host, () => {
+  console.log('Ringonyx listening on http://' + host + ':' + server.address().port);
 });

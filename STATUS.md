@@ -88,3 +88,5 @@ Network operators can generate itemized buyer invoices, resolve disputes submitt
 Local follow-up includes single-use renter invitations and sign-in, guided setup for an existing tracking number, busy/no-answer/after-hours fallback simulations, publisher pauses based on a daily missed-call threshold, and per-record call and web lead evidence.
 
 Added a dedicated renter-call record with qualification explanation and exact invoice-line navigation, a workspace activity timeline, and saved buyer exclusions and ranking evidence with configurable predictive trials. Earlier call completions and settlements lack event timestamps, and earlier routing audits retain their original evidence.
+
+Render staging preparation adds configurable `RINGONYX_HOST`. Set it to `0.0.0.0` on Render. Hosted deployment and acceptance are pending.
