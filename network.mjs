@@ -54,6 +54,10 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     );
     CREATE INDEX IF NOT EXISTS network_invoice_buyer ON network_invoices(buyer);
     CREATE INDEX IF NOT EXISTS network_invoice_items ON network_invoice_lines(invoice);
+    CREATE TABLE IF NOT EXISTS network_invoice_disputes (
+      invoice TEXT PRIMARY KEY REFERENCES network_invoices(id),
+      reason TEXT NOT NULL, opened TEXT NOT NULL, resolution TEXT, resolved TEXT
+    );
   `);
   const region = value => {
     const result = required(value, 'region').toUpperCase();
@@ -72,9 +76,10 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       WHERE c.buyer=b.id AND c.created>=(SELECT MIN(created) FROM network_buyer_credit WHERE buyer=b.id)) AS credit_used`;
   function invoices(column, value) {
     return query(`SELECT i.id, i.created, b.name AS buyer_name,
-      SUM(l.cents) AS cents, COUNT(*) AS calls
+      SUM(l.cents) AS cents, COUNT(*) AS calls, d.reason, d.opened, d.resolution, d.resolved
       FROM network_invoices i JOIN buyers b ON b.id=i.buyer
       JOIN network_invoice_lines l ON l.invoice=i.id
+      LEFT JOIN network_invoice_disputes d ON d.invoice=i.id
       WHERE b.${column}=? GROUP BY i.id ORDER BY i.created DESC, i.id`, value).map(invoice => ({
       ...invoice,
       lines: query(`SELECT c.reference, l.cents FROM network_invoice_lines l
@@ -82,6 +87,32 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     }));
   }
   const endpoints = {
+    dispute(account, data) {
+      const invoice = required(data.invoice, 'invoice');
+      const reason = required(data.reason, 'dispute reason');
+      return transaction(() => {
+        if (!query(`SELECT i.id FROM network_invoices i JOIN buyers b ON b.id=i.buyer
+          WHERE i.id=? AND b.account=?`, invoice, account).length) fail('Unknown buyer invoice.', 404);
+        const [prior] = query('SELECT reason, resolved FROM network_invoice_disputes WHERE invoice=?', invoice);
+        if (prior && (prior.reason !== reason || prior.resolved)) fail('Invoice already has a dispute record.', 409);
+        if (!prior) run('INSERT INTO network_invoice_disputes (invoice, reason, opened) VALUES (?, ?, ?)', invoice, reason, now());
+        return { invoice, reason };
+      });
+    },
+    'resolve-dispute'(account, data) {
+      const invoice = required(data.invoice, 'invoice');
+      const resolution = required(data.resolution, 'resolution');
+      return transaction(() => {
+        const [prior] = query(`SELECT d.resolution FROM network_invoice_disputes d
+          JOIN network_invoices i ON i.id=d.invoice JOIN buyers b ON b.id=i.buyer
+          WHERE d.invoice=? AND b.account=?`, invoice, account);
+        if (!prior) fail('Unknown buyer invoice dispute.', 404);
+        if (prior.resolution && prior.resolution !== resolution) fail('Dispute already resolved.', 409);
+        if (!prior.resolution) run('UPDATE network_invoice_disputes SET resolution=?, resolved=? WHERE invoice=?',
+          resolution, now(), invoice);
+        return { invoice, resolution };
+      });
+    },
     invoices(account, data) {
       const buyer = required(data.buyer, 'buyer');
       return transaction(() => {

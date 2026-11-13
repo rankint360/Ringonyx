@@ -73,7 +73,10 @@ function networkInvoices(invoices) {
   return '<section><h2>Buyer invoices</h2>' + (invoices.map(invoice =>
     `<details><summary>${escape(invoice.buyer_name)} · ${escape(new Date(invoice.created).toLocaleDateString())}
       · ${invoice.calls} calls · ${money(invoice.cents)}</summary>
-      <p>Invoice ${escape(invoice.id)}</p><ul>${invoice.lines.map(line =>
+      <p>Invoice ${escape(invoice.id)}</p>
+      ${invoice.reason ? '<p>Dispute ' + (invoice.resolved ? 'resolved' : 'open') + ' · ' + escape(invoice.reason) + '</p>' : ''}
+      ${invoice.resolution ? '<p>Resolution · ' + escape(invoice.resolution) + '</p>' : ''}
+      <ul>${invoice.lines.map(line =>
         `<li>${escape(line.reference)} · ${money(line.cents)}</li>`).join('')}</ul></details>`
   ).join('') || '<p>No buyer invoices yet.</p>') + '</section>';
 }
@@ -102,6 +105,11 @@ function renderNetwork(dashboard, data, canWrite) {
     form('Record prepaid credit', 'network/credit', select('buyer', 'Buyer', data.buyers, 'id', 'name') +
       field('reference', 'Deposit reference') + integer('cents', 'Credit in cents', 5000), 'Record credit') +
     form('Generate buyer invoice', 'network/invoices', select('buyer', 'Buyer', data.buyers, 'id', 'name'), 'Generate invoice') +
+    form('Record buyer dispute', 'network/dispute', select('invoice', 'Invoice', data.invoices.filter(row => !row.opened), 'id', 'id') +
+      field('reason', 'Reason', 'maxlength="200"'), 'Record dispute') +
+    form('Resolve buyer dispute', 'network/resolve-dispute',
+      select('invoice', 'Invoice', data.invoices.filter(row => row.opened && !row.resolved), 'id', 'id') +
+      field('resolution', 'Resolution', 'maxlength="200"'), 'Resolve dispute') +
     form('Publisher offer', 'network/publishers', field('name', 'Offer name') + integer('payout', 'Payout in cents', 3000), 'Add offer') +
     form('Preview a bid', 'network/ping', bid, 'Preview match') +
     form('Submit a simulated call', 'network/post', bid + field('reference', 'Call reference'), 'Route call') +

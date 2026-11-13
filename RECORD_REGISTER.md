@@ -76,4 +76,6 @@
 
 | 2026-11-12 | 25, 28 | Added itemized network buyer invoices, buyer portal visibility, and invoice references on network calls. | Integration tests covered workspace and role restrictions, invoice totals, portal line items, and duplicate billing prevention. |
 
+| 2026-11-12 | 25, 28 | Added operator-managed network invoice disputes and buyer portal visibility. | Integration tests verified workspace isolation, viewer restrictions, resolution retries, and buyer visibility. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.
