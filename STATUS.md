@@ -86,3 +86,5 @@ Operators can record deposits against a buyer contract. The first deposit activa
 Network operators can generate itemized buyer invoices, resolve disputes submitted from scoped buyer portals, and apply manual payments and credits. Payment collection remains pending.
 
 Local follow-up includes single-use renter invitations and sign-in, guided setup for an existing tracking number, busy/no-answer/after-hours fallback simulations, publisher pauses based on a daily missed-call threshold, and per-record call and web lead evidence.
+
+Added a dedicated renter-call record with qualification explanation and exact invoice-line navigation, a workspace activity timeline, and saved buyer exclusions and ranking evidence with configurable predictive trials. Earlier call completions and settlements lack event timestamps, and earlier routing audits retain their original evidence.

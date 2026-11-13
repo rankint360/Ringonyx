@@ -23,7 +23,8 @@ function history(calls, operator) {
         [call.outcome, operator && call.simulated_disclosure ? 'Recording consent: ' + call.simulated_recording_decision : ''].filter(Boolean).join(' · '),
       call.duration ?? '—', money(call.cents)].map(value => '<td>' + escape(value) + '</td>').join('')}</tr>
       <tr><td colspan="7"><details><summary>Call details</summary>
-      <p>Call reference ${escape(call.id)} · ${escape(call.tracking_number || call.site_name)}</p>
+      <p>${operator ? '<a href="/call?id=' + encodeURIComponent(call.id) + '">Open call record</a> · ' : ''}
+        Call reference ${escape(call.id)} · ${escape(call.tracking_number || call.site_name)}</p>
       <p>${call.qualification_minimum == null ? 'No renter billing rule was assigned.' :
         'Agreed rate ' + money(call.agreed_rate) + ' · Minimum ' + call.qualification_minimum + ' seconds'}</p>
       <p>${call.invoice ? 'Invoice ' + escape(call.invoice) : 'No invoice line yet'} · Charge ${money(call.cents)}</p>
@@ -46,8 +47,10 @@ function invoiceList(invoices) {
       ${invoice.bookings ? ' · Bookings ' + invoice.bookings : ''}
       ${invoice.disputed ? ' · Disputed' : ''}
       ${invoice.period ? ' · ' + escape(invoice.period) + ' rent ' + money(invoice.rent) : ''}
-      <details><summary>Invoice details</summary><small>Invoice ${escape(invoice.id)}</small>
-      <ul>${invoice.lines.map(line => `<li>${escape(line.kind)} · ${escape(line.reference)} · ${money(line.cents)}</li>`).join('')}</ul>
+      <details ${invoice.lines.some(line => line.call && location.hash === '#invoice-line-' + line.call) ? 'open' : ''}>
+      <summary>Invoice details</summary><small>Invoice ${escape(invoice.id)}</small>
+      <ul>${invoice.lines.map(line => `<li ${line.call ? 'id="invoice-line-' + escape(line.call) + '"' : ''}>
+        ${escape(line.kind)} · ${escape(line.reference)} · ${money(line.cents)}</li>`).join('')}</ul>
       ${invoice.entries.length ? '<h3>Payments and credits</h3><ul>' + invoice.entries.map(entry =>
         `<li>${escape(entry.kind)} · ${escape(new Date(entry.created).toLocaleDateString())} · ${money(entry.cents)}</li>`).join('') + '</ul>' : ''}
       </details></li>`).join('') + '</ul>' : '<p>No invoices yet.</p>'}</section>`;
@@ -71,6 +74,7 @@ function networkEvidence(call) {
     ${call.invoice ? '<p>Invoice ' + escape(call.invoice) + '</p>' : ''}
     ${candidates.length ? '<ul>' + candidates.map(candidate =>
       `<li>${escape(candidate.name)} · ${money(candidate.bid)} · ${escape(candidate.decision)}
+      ${candidate.rank ? ' · Rank ' + candidate.rank : ''}${candidate.exploration ? ' · New buyer trial' : ''}
       ${candidate.expectedRevenue === null ? '' : ' · Expected revenue ' + money(candidate.expectedRevenue)}</li>`).join('') + '</ul>' : ''}
     </details></td></tr>`;
 }
@@ -126,6 +130,8 @@ function renderNetwork(dashboard, data, canWrite) {
     form('Publisher quality rule', 'network/quality', offer +
       integer('limit', 'Missed calls per UTC day before pause (0 disables)', 0), 'Save rule') +
     form('Preview a bid', 'network/ping', bid, 'Preview match') +
+    form('Predictive routing trials', 'network/exploration',
+      integer('limit', 'Trial calls per buyer (0 disables)', data.exploration ?? 0), 'Save trial limit') +
     form('Submit a simulated call', 'network/post', bid + field('reference', 'Call reference'), 'Route call') +
     form('Settle a simulated call', 'network/complete', select('call', 'Pending call', pending, 'id', 'reference') +
       integer('seconds', 'Connected seconds', 95) +
@@ -207,7 +213,31 @@ async function render() {
   app.innerHTML = `<div class="workspace-header"><div><h1>${escape(session.workspace)}</h1>
     <p>${escape(session.email)} · ${escape(session.role)}</p></div>
     <form id="sign-out"><button>Sign out</button></form></div>
-    <p><a href="/app">Rentals and billing</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a> · <a href="/leads">Web leads</a> · <a href="/analytics">Analytics</a> · <a href="/operations">Operations</a></p><div id="dashboard"></div>`;
+    <p><a href="/app">Rentals and billing</a> · <a href="/activity">Activity</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a> · <a href="/leads">Web leads</a> · <a href="/analytics">Analytics</a> · <a href="/operations">Operations</a></p><div id="dashboard"></div>`;
+  if (location.pathname === '/call') {
+    const id = new URLSearchParams(location.search).get('id') ?? '';
+    const call = await request('call-detail?id=' + encodeURIComponent(id));
+    let reason = 'Meets the agreed minimum talk time.';
+    if (call.outcome === 'pending') reason = 'Waiting for call completion.';
+    else if (call.outcome === 'unrouted') reason = 'No destination accepted the call.';
+    else if (call.outcome === 'missed') reason = 'Call was missed.';
+    else if (call.qualification_minimum === null) reason = 'No renter billing rule was assigned.';
+    else if (call.duration < call.qualification_minimum) reason = 'Answered below the agreed minimum talk time.';
+    document.querySelector('#dashboard').innerHTML = '<h2>Call record</h2><p>' + escape(reason) + '</p>' +
+      (call.invoice ? '<p><a href="/app#invoice-line-' + encodeURIComponent(call.id) + '">Open invoice line</a></p>' : '') +
+      history([call], true);
+    return;
+  }
+  if (location.pathname === '/activity') {
+    const events = await request('activity');
+    document.querySelector('#dashboard').innerHTML = '<h2>Activity timeline</h2>' +
+      (events.length ? '<ol>' + events.map(row => `<li><strong>${escape(row.event)}</strong> ·
+        ${escape(new Date(row.time).toLocaleString())} · ${row.channel === 'call'
+          ? '<a href="/call?id=' + encodeURIComponent(row.reference) + '">' + escape(row.reference) + '</a>'
+          : escape(row.reference)} · ${escape(row.detail)}
+        ${row.cents == null ? '' : ' · ' + money(row.cents)}</li>`).join('') + '</ol>' : '<p>No activity yet.</p>');
+    return;
+  }
   if (location.pathname === '/operations') {
     renderOperations(document.querySelector('#dashboard'), await request('operations'), session.role === 'owner');
     return;
@@ -303,6 +333,7 @@ async function render() {
     '</section><section><h2>Invoice disputes</h2>' +
     (disputes.map(row => '<p>' + escape(row.renter_name) + ' · ' + escape(row.reason) + ' · ' +
       (row.resolved ? escape(row.resolution) + ' · Credit ' + money(row.credit) : 'Open') + '</p>').join('') || '<p>No disputes.</p>') + '</section>');
+  if (location.hash.startsWith('#invoice-line-')) document.getElementById(location.hash.slice(1))?.scrollIntoView();
 }
 function leadTable(leads, partner = false) {
   if (!leads.length) return '<p>No leads yet.</p>';

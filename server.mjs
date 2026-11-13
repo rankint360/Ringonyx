@@ -56,6 +56,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS charges (
     call TEXT PRIMARY KEY REFERENCES calls(id), cents INTEGER NOT NULL
   );
+    CREATE TABLE IF NOT EXISTS call_completion_times (call TEXT PRIMARY KEY REFERENCES calls(id), created TEXT NOT NULL);
 `);
 initializeAccounts(db);
 initializeBilling(db);
@@ -226,6 +227,7 @@ function complete(id, data, account) {
   if (call.outcome !== 'pending') fail('Call cannot be finalized', 409);
   const cents = call.assignment && data.outcome === 'answered' && duration >= call.minimum ? call.rate : 0;
   run('UPDATE calls SET outcome=?, duration=? WHERE id=?', data.outcome, duration, id);
+  run('INSERT INTO call_completion_times VALUES (?, ?)', id, now());
   if (cents) run('INSERT INTO charges VALUES (?, ?)', id, cents);
   return { cents };
 }
@@ -244,6 +246,8 @@ const ops = operations(db, { query, run, transaction, required, fail, now, addSi
   readSites: account => query(routes.sites, account),
   campaigns: account => insights.report(account).campaigns });
 const assets = {
+  '/call': ['index.html', 'text/html'],
+  '/activity': ['index.html', 'text/html'],
   '/': ['home.html', 'text/html'],
   '/home.css': ['home.css', 'text/css'],
   '/home.js': ['home.js', 'text/javascript'],
@@ -348,6 +352,47 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && user.role === 'viewer') fail('This account has read-only access.', 403);
     if (user.renter) fail('Use your renter portal.', 403);
+    if (req.method === 'GET' && pathname === '/api/call-detail') {
+      const id = required(new URL(req.url, 'http://localhost').searchParams.get('id'), 'call');
+      const [call] = query(routes.calls + ' WHERE s.account=? AND c.id=?', user.account, id);
+      if (!call) fail('Unknown call.', 404);
+      return json(call);
+    }
+    if (req.method === 'GET' && pathname === '/api/activity') {
+      return json(query(`WITH scope(account) AS (VALUES (?))
+        SELECT c.created AS time, 'Call received' AS event, c.id AS reference, c.source AS detail, NULL AS cents, 'call' AS channel
+          FROM calls c JOIN sites s ON s.id=c.site JOIN scope x ON x.account=s.account
+        UNION ALL SELECT t.created, 'Call completed', c.id, c.outcome, ch.cents, 'call'
+          FROM call_completion_times t JOIN calls c ON c.id=t.call JOIN sites s ON s.id=c.site
+          JOIN scope x ON x.account=s.account LEFT JOIN charges ch ON ch.call=c.id
+        UNION ALL SELECT i.created, 'Renter call invoiced', l.call, i.id, l.cents, 'call'
+          FROM invoice_lines l JOIN invoices i ON i.id=l.invoice JOIN scope x ON x.account=i.account
+        UNION ALL SELECT e.created, 'Renter invoice ' || e.kind, i.id, e.reference, e.cents, 'invoice'
+          FROM invoice_entries e JOIN invoices i ON i.id=e.invoice JOIN scope x ON x.account=i.account
+        UNION ALL SELECT b.created, 'Booking verified', b.call, b.reference, b.cents, 'call'
+          FROM booking_charges b JOIN scope x ON x.account=b.account
+        UNION ALL SELECT l.created, 'Web lead captured', l.id, l.source, NULL, 'web'
+          FROM web_leads l JOIN sites s ON s.id=l.site JOIN scope x ON x.account=s.account
+        UNION ALL SELECT d.created, 'Web lead delivered', l.id, b.name, d.cents, 'web'
+          FROM lead_deliveries d JOIN web_leads l ON l.id=d.lead JOIN sites s ON s.id=l.site
+          JOIN scope x ON x.account=s.account JOIN buyers b ON b.id=d.buyer
+        UNION ALL SELECT c.created, 'Network routing decision', c.id, d.reason, d.bid, 'network'
+          FROM network_calls c JOIN scope x ON x.account=c.account LEFT JOIN network_decisions d ON d.call=c.id
+        UNION ALL SELECT t.created, 'Network call settled', c.id, c.outcome, c.revenue, 'network'
+          FROM network_settlement_times t JOIN network_calls c ON c.id=t.call JOIN scope x ON x.account=c.account
+        UNION ALL SELECT t.created, 'Publisher payout accrued', c.id, o.name, c.payout, 'network'
+          FROM network_settlement_times t JOIN network_calls c ON c.id=t.call JOIN scope x ON x.account=c.account
+          JOIN publisher_offers o ON o.id=c.offer WHERE c.payout>0
+        UNION ALL SELECT e.created, 'Buyer prepaid deposit', b.id, e.reference, e.cents, 'buyer'
+          FROM network_buyer_credit e JOIN buyers b ON b.id=e.buyer JOIN scope x ON x.account=b.account
+        UNION ALL SELECT i.created, 'Network call invoiced', c.id, i.id, l.cents, 'network'
+          FROM network_invoice_lines l JOIN network_invoices i ON i.id=l.invoice
+          JOIN network_calls c ON c.id=l.call JOIN scope x ON x.account=c.account
+        UNION ALL SELECT e.created, 'Buyer invoice ' || e.kind, i.id, e.reference, e.cents, 'invoice'
+          FROM network_invoice_entries e JOIN network_invoices i ON i.id=e.invoice
+          JOIN buyers b ON b.id=i.buyer JOIN scope x ON x.account=b.account
+        ORDER BY time DESC, channel, reference, event LIMIT 200`, user.account));
+    }
     if (req.method === 'POST' && pathname.startsWith('/api/')) {
       res.once('finish', () => {
         if (res.statusCode >= 300) return;

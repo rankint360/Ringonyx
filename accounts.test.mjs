@@ -420,7 +420,8 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   assert.equal((await post(owner, 'network/ping', budgetRoute, 200)).bid, 5000);
   const evidence = (await api('network', { cookie: owner })).data.calls.find(row => row.id === reserved.id);
   assert.equal(evidence.minimum, 90);
-  assert.equal(JSON.parse(evidence.candidates)[0].decision, 'Selected');
+  assert.equal(JSON.parse(evidence.candidates).find(row => row.name === 'Budget buyer').decision, 'Selected');
+  assert.ok(JSON.parse(evidence.candidates).some(row => row.decision === 'Outside buyer coverage'));
   await post(owner, 'network/budget', { buyer: limited.id, budget: 0 }, 200);
   const credit = { buyer: limited.id, reference: 'deposit-1', cents: 5000 };
   await post(other, 'network/credit', credit, 404);
@@ -498,6 +499,14 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   assert.equal(qualityCall.buyer, limited.id);
   await post(owner, 'network/complete', { call: qualityCall.id, outcome: 'missed', seconds: 0 }, 200);
   assert.equal((await post(owner, 'network/ping', budgetRoute, 200)).reason, 'Publisher offer paused');
+  const callDetail = (await api('call-detail?id=' + call.id, { cookie: owner })).data;
+  assert.equal(callDetail.invoice, invoice.id);
+  await api('call-detail?id=' + callDetail.id, { cookie: other, status: 404 });
+  const activity = (await api('activity', { cookie: owner })).data;
+  for (const event of ['Call completed', 'Renter call invoiced', 'Web lead delivered', 'Publisher payout accrued', 'Buyer invoice payment']) {
+    assert.ok(activity.some(row => row.event === event), event);
+  }
+  assert.ok(!(await api('activity', { cookie: other })).data.some(row => row.reference === callDetail.id));
   await post(owner, 'logout', {}, 200);
   await api('session', { cookie: owner, status: 401 });
 });

@@ -82,4 +82,6 @@
 
 | 2026-11-12 | Local follow-up | Added buyer dispute submission, renter invitations and sign-in, existing-number setup, fallback scenarios, publisher quality pauses, and lead details. | All three integration tests passed, including scoped access, single-use invitations, guided setup, fallback selection, and automatic pauses. |
 
+| 2026-11-12 | Local improvements | Added a dedicated call record, invoice-line navigation, shared activity, and expanded buyer routing evidence with predictive trials. | All three integration tests passed, including workspace isolation, invoice linkage, timeline events, and coverage exclusions. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

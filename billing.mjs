@@ -56,10 +56,10 @@ export function billing({ query, run, transaction, id, now, fail }) {
   function invoiceDetails(records) {
     return records.map(invoice => ({
       ...invoice,
-      lines: query(`SELECT 'call' AS kind, c.created, c.source AS reference, l.cents
+      lines: query(`SELECT 'call' AS kind, c.created, c.source AS reference, l.cents, c.id AS call
         FROM invoice_lines l JOIN calls c ON c.id=l.call WHERE l.invoice=?
-        UNION ALL SELECT 'booking', created, reference, cents FROM booking_charges WHERE invoice=?
-        UNION ALL SELECT 'rent', i.created, r.period, r.cents FROM invoice_rent r
+        UNION ALL SELECT 'booking', created, reference, cents, NULL FROM booking_charges WHERE invoice=?
+        UNION ALL SELECT 'rent', i.created, r.period, r.cents, NULL FROM invoice_rent r
           JOIN invoices i ON i.id=r.invoice WHERE r.invoice=?
         ORDER BY created, kind, reference`, invoice.id, invoice.id, invoice.id),
       entries: query('SELECT kind, cents, created FROM invoice_entries WHERE invoice=? ORDER BY created, reference', invoice.id)

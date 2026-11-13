@@ -21,6 +21,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       payout INTEGER NOT NULL DEFAULT 0, UNIQUE(offer, reference)
     );
     CREATE INDEX IF NOT EXISTS network_buyer_activity ON network_calls(buyer, created, outcome);
+    CREATE TABLE IF NOT EXISTS network_settlement_times (call TEXT PRIMARY KEY REFERENCES network_calls(id), created TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS network_suppression (
       account TEXT NOT NULL REFERENCES accounts(id), region TEXT NOT NULL,
       PRIMARY KEY(account, region)
@@ -47,6 +48,9 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     CREATE TABLE IF NOT EXISTS network_call_evidence (
       call TEXT PRIMARY KEY REFERENCES network_calls(id),
       minimum INTEGER, payout INTEGER NOT NULL, candidates TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS network_exploration (
+      account TEXT PRIMARY KEY REFERENCES accounts(id), sample_limit INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS network_invoices (
       id TEXT PRIMARY KEY, buyer TEXT NOT NULL REFERENCES buyers(id), created TEXT NOT NULL
@@ -97,6 +101,12 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     }));
   }
   const endpoints = {
+    exploration(account, data) {
+      const limit = whole(data.limit, 100);
+      run(`INSERT INTO network_exploration VALUES (?, ?) ON CONFLICT(account)
+        DO UPDATE SET sample_limit=excluded.sample_limit`, account, limit);
+      return { limit };
+    },
     quality(account, data) {
       const offer = required(data.offer, 'publisher offer');
       const limit = whole(data.limit, 1000);
@@ -250,7 +260,10 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     const timestamp = now();
     const suppressed = query('SELECT region FROM network_suppression WHERE account=? AND region=?', account, code).length > 0;
     const paused = query("SELECT party FROM network_pauses WHERE account=? AND kind='publisher' AND party=?", account, offerId).length > 0;
-    const candidates = suppressed || paused ? [] : query(`SELECT b.*, limits.daily_cents,
+    const exploration = query('SELECT sample_limit FROM network_exploration WHERE account=?', account)[0]?.sample_limit ?? 0;
+    const candidates = query(`SELECT b.*, limits.daily_cents,
+      EXISTS(SELECT 1 FROM network_pauses p WHERE p.account=b.account AND p.kind='buyer' AND p.party=b.id) AS paused,
+      (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.outcome IN ('pending','answered','missed')) AS samples,
       ${prepaidTotals},
       (SELECT COALESCE(SUM(CASE WHEN c.outcome='pending' THEN b.price ELSE c.revenue END), 0)
         FROM network_calls c WHERE c.buyer=b.id AND c.created>=?) AS committed,
@@ -258,25 +271,32 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.outcome='pending') AS active,
       (SELECT AVG(c.revenue) FROM network_calls c WHERE c.buyer=b.id AND c.outcome IN ('answered','missed')) AS yield
       FROM buyers b LEFT JOIN network_buyer_budgets limits ON limits.buyer=b.id
-      WHERE b.account=? AND b.region=? AND b.price>=?
-      AND NOT EXISTS(SELECT 1 FROM network_pauses p WHERE p.account=b.account AND p.kind='buyer' AND p.party=b.id)`,
-    timestamp.slice(0,10), timestamp.slice(0,10), account, code, Math.max(floor, offer.payout));
+      WHERE b.account=? ORDER BY b.id`, timestamp.slice(0,10), timestamp.slice(0,10), account);
     const excluded = buyer => {
+      if (paused) return 'Publisher offer paused';
+      if (suppressed) return 'Region suppressed';
+      if (buyer.region !== code) return 'Outside buyer coverage';
+      if (buyer.paused) return 'Buyer paused';
+      if (buyer.price < Math.max(floor, offer.payout)) return 'Below effective bid floor';
       if (buyer.daily >= buyer.cap) return 'Daily call cap reached';
       if (buyer.active >= buyer.concurrency) return 'Concurrent call cap reached';
       if (buyer.daily_cents !== null && buyer.committed + buyer.price > buyer.daily_cents) return 'Daily budget reached';
       if (buyer.funded !== null && buyer.credit_used + buyer.price > buyer.funded) return 'Prepaid balance reached';
       return null;
     };
+    const exploring = buyer => strategy === 'predictive' && buyer.samples < exploration;
     const eligible = candidates.filter(buyer => !excluded(buyer));
-    eligible.sort((a, b) => (strategy === 'predictive' ? (b.yield ?? b.price) - (a.yield ?? a.price) : 0)
+    eligible.sort((a, b) => Number(exploring(b)) - Number(exploring(a))
+      || (exploring(a) && exploring(b) ? a.samples - b.samples : 0)
+      || (strategy === 'predictive' ? (b.yield ?? b.price) - (a.yield ?? a.price) : 0)
       || b.price - a.price || a.id.localeCompare(b.id));
     const buyer = eligible[0];
     const outcome = buyer ? 'pending' : suppressed || paused ? 'suppressed' : 'unmatched';
+    const qualified = candidates.filter(b => b.region === code && !b.paused && b.price >= Math.max(floor, offer.payout));
     const reason = buyer ? 'Matched' : paused ? 'Publisher offer paused' : suppressed ? 'Region suppressed'
-      : candidates.length && candidates.every(candidate => excluded(candidate) === 'Daily budget reached')
-        ? 'Buyer budget reached' : candidates.length && candidates.every(candidate => excluded(candidate) === 'Prepaid balance reached')
-          ? 'Buyer prepaid balance reached' : candidates.length ? 'Buyer capacity reached' : 'No active buyer meets coverage and floor';
+      : qualified.length && qualified.every(candidate => excluded(candidate) === 'Daily budget reached')
+        ? 'Buyer budget reached' : qualified.length && qualified.every(candidate => excluded(candidate) === 'Prepaid balance reached')
+          ? 'Buyer prepaid balance reached' : qualified.length ? 'Buyer capacity reached' : 'No active buyer meets coverage and floor';
     if (!commit) return { outcome, buyer: buyer?.name ?? null, bid: buyer?.price ?? null, reason };
     const id = randomUUID();
     run(`INSERT INTO network_calls (id, account, offer, buyer, reference, region, created, outcome)
@@ -284,6 +304,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     run('INSERT INTO network_decisions VALUES (?, ?, ?, ?, ?, ?)', id, strategy, floor, buyer?.price ?? null, outcome, reason);
     const evidence = candidates.map(candidate => ({
       name: candidate.name, bid: candidate.price,
+      samples: candidate.samples, exploration: exploring(candidate), rank: eligible.includes(candidate) ? eligible.indexOf(candidate) + 1 : null,
       expectedRevenue: strategy === 'predictive' ? Math.round(candidate.yield ?? candidate.price) : null,
       decision: candidate === buyer ? 'Selected' : excluded(candidate) ?? 'Ranked below winner'
     }));
@@ -330,6 +351,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
         delete row.api_token;
       }
       return { buyers, publishers, calls: query(details + ' WHERE c.account=? ORDER BY c.created DESC', account),
+        exploration: query('SELECT sample_limit FROM network_exploration WHERE account=?', account)[0]?.sample_limit ?? 0,
         invoices: invoices('account', account),
         credits: query(`SELECT credit.buyer, credit.reference, credit.cents, credit.created, b.name AS buyer_name
           FROM network_buyer_credit credit JOIN buyers b ON b.id=credit.buyer
@@ -355,6 +377,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
         const revenue = qualified ? (call.bid ?? buyer.price) : 0;
         const payout = qualified ? (call.offered_payout ?? offer.payout) : 0;
         run('UPDATE network_calls SET outcome=?, seconds=?, revenue=?, payout=? WHERE id=?', data.outcome, seconds, revenue, payout, call.id);
+        run('INSERT INTO network_settlement_times VALUES (?, ?)', call.id, now());
         const [quality] = query('SELECT missed_limit FROM publisher_quality WHERE offer=?', call.offer);
         if (data.outcome === 'missed' && quality?.missed_limit) {
           const [activity] = query("SELECT COUNT(*) AS missed FROM network_calls WHERE offer=? AND outcome='missed' AND created>=?",
