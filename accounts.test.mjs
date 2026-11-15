@@ -11,6 +11,7 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   const directory = mkdtempSync(join(tmpdir(), 'ringonyx-'));
   const env = { ...process.env, PORT: '0', NODE_ENV: 'production', RINGONYX_DB: join(directory, 'test.sqlite'), RINGONYX_OPERATOR_KEY: 'ignored-in-production' };
   const password = 'test-password-for-accounts';
+  env.RINGONYX_ADMIN_EMAIL = 'owner@example.test';
   const provision = (...args) => {
     const result = spawnSync(process.execPath, ['server.mjs', '--provision', ...args], { env, input: password, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
@@ -57,6 +58,8 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   const owner = await signIn('owner@example.test');
   const viewer = await signIn('viewer@example.test');
   const other = await signIn('other@example.test');
+  await api('admin', { cookie: other, status: 403 });
+  assert.equal((await api('admin', { cookie: owner })).data.voice.configured, false);
   const post = async (cookie, path, body, status = 201) => (await api(path, { cookie, body, status })).data;
   const number = '+16025550100';
   const site = await post(owner, 'sites', { name: 'Plumbing', number });
@@ -507,6 +510,11 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
     assert.ok(activity.some(row => row.event === event), event);
   }
   assert.ok(!(await api('activity', { cookie: other })).data.some(row => row.reference === callDetail.id));
+  const adminUsers = (await api('admin', { cookie: owner })).data.users;
+  const otherId = adminUsers.find(row => row.email === 'other@example.test').id;
+  await post(owner, 'admin', { action: 'user', id: otherId, state: 'disabled' }, 200);
+  await api('sites', { cookie: other, status: 401 });
+  await api('login', { body: { email: 'other@example.test', password }, status: 403 });
   await post(owner, 'logout', {}, 200);
   await api('session', { cookie: owner, status: 401 });
 });

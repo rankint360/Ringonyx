@@ -76,6 +76,13 @@ if (process.argv[2] === '--provision') {
 }
 const production = process.env.NODE_ENV === 'production';
 const access = accountAccess(db, { secure: production });
+const adminEmail = process.env.RINGONYX_ADMIN_EMAIL?.trim().toLowerCase();
+const isAdmin = user => Boolean(adminEmail && user?.email === adminEmail && user.role === 'owner' && !user.renter);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS platform_review (account TEXT PRIMARY KEY REFERENCES accounts(id), state TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS platform_disabled_users (user TEXT PRIMARY KEY REFERENCES users(id));
+  CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+`);
 const localKey = production ? undefined : process.env.RINGONYX_OPERATOR_KEY;
 const now = () => new Date().toISOString();
 const routes = {
@@ -246,6 +253,7 @@ const ops = operations(db, { query, run, transaction, required, fail, now, addSi
   readSites: account => query(routes.sites, account),
   campaigns: account => insights.report(account).campaigns });
 const assets = {
+  '/admin': ['index.html', 'text/html'],
   '/call': ['index.html', 'text/html'],
   '/activity': ['index.html', 'text/html'],
   '/': ['home.html', 'text/html'],
@@ -291,6 +299,9 @@ const server = createServer(async (req, res) => {
     if (visitor && req.method === 'POST') {
       res.setHeader('Access-Control-Allow-Origin', '*');
       return json(tracking.lease(visitor[1], await body(req)));
+    }
+    if (pathname === '/webhooks/twilio/voice' && query("SELECT key FROM platform_settings WHERE key='voice' AND value='paused'").length) {
+      fail('Inbound voice is paused.', 503);
     }
     if (await handleVoice(req, res, pathname)) return;
     if (req.method === 'POST' && req.headers.origin) {
@@ -347,8 +358,47 @@ const server = createServer(async (req, res) => {
     const user = access.session(req) || (localKey && req.headers['x-ringonyx-operator'] === localKey
       ? { account: 'legacy', role: 'owner', workspace: 'Original workspace' } : null);
     if (!user) fail('Sign in to continue.', 401);
+    if (pathname === '/api/admin') {
+      if (!isAdmin(user)) fail('Platform administrator access required.', 403);
+      if (req.method === 'GET') return json({
+        accounts: query(`SELECT a.id, a.name, COALESCE(r.state,'approved') AS state
+          FROM accounts a LEFT JOIN platform_review r ON r.account=a.id ORDER BY a.name`),
+        users: query(`SELECT u.id, u.email, u.role, a.name AS workspace, d.user IS NOT NULL AS disabled
+          FROM users u JOIN accounts a ON a.id=u.account LEFT JOIN platform_disabled_users d ON d.user=u.id ORDER BY u.email`),
+        voice: {
+          configured: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.RINGONYX_VOICE_ORIGIN),
+          paused: query("SELECT value FROM platform_settings WHERE key='voice'")[0]?.value === 'paused'
+        }
+      });
+      if (req.method !== 'POST') fail('Method not allowed.', 405);
+      const data = await body(req);
+      return json(transaction(() => {
+        if (data.action === 'workspace') {
+          const id = required(data.id, 'workspace');
+          if (id === user.account) fail('Your admin workspace cannot be restricted.');
+          if (!['approved', 'pending', 'suspended'].includes(data.state)) fail('Unknown approval state.');
+          if (!query('SELECT id FROM accounts WHERE id=?', id).length) fail('Unknown workspace.', 404);
+          run('INSERT INTO platform_review VALUES (?, ?) ON CONFLICT(account) DO UPDATE SET state=excluded.state', id, data.state);
+          if (data.state !== 'approved') run('DELETE FROM sessions WHERE user IN (SELECT id FROM users WHERE account=?)', id);
+        } else if (data.action === 'user') {
+          const id = required(data.id, 'user');
+          if (id === user.id) fail('Your administrator account cannot be disabled.');
+          if (!['enabled', 'disabled'].includes(data.state)) fail('Unknown user state.');
+          if (!query('SELECT id FROM users WHERE id=?', id).length) fail('Unknown user.', 404);
+          if (data.state === 'disabled') {
+            run('INSERT OR IGNORE INTO platform_disabled_users VALUES (?)', id);
+            run('DELETE FROM sessions WHERE user=?', id);
+          } else run('DELETE FROM platform_disabled_users WHERE user=?', id);
+        } else if (data.action === 'voice') {
+          if (!['enabled', 'paused'].includes(data.state)) fail('Unknown voice state.');
+          run("INSERT INTO platform_settings VALUES ('voice', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", data.state);
+        } else fail('Unknown admin action.');
+        ops.audit(user, 'platform/' + data.action + '/' + data.state);
+        return { saved: true };
+      }));
+    }
     if (req.method === 'GET' && pathname === '/api/session') {
-      return json({ email: user.email, role: user.renter ? 'renter' : user.role, workspace: user.workspace });
+      return json({ email: user.email, role: user.renter ? 'renter' : user.role, workspace: user.workspace, platformAdmin: isAdmin(user) });
     }
     if (req.method === 'POST' && user.role === 'viewer') fail('This account has read-only access.', 403);
     if (user.renter) fail('Use your renter portal.', 403);

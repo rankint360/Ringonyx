@@ -127,6 +127,10 @@ export function accountAccess(db, { secure }) {
       const user = findUser.get(email);
       const valid = timingSafeEqual(derive(password, user?.salt || 'ringonyx-sign-in'), user ? Buffer.from(user.hash, 'hex') : dummy);
       if (!user || !valid) fail('Invalid email or password.', 401);
+      if (db.prepare('SELECT user FROM platform_disabled_users WHERE user=?').get(user.id) ||
+          db.prepare("SELECT account FROM platform_review WHERE account=? AND state<>'approved'").get(user.account)) {
+        fail('Account access is restricted.', 403);
+      }
       attempts.delete(address);
       revoke(req);
       db.prepare('DELETE FROM sessions WHERE expires<=?').run(now);

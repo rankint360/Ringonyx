@@ -214,6 +214,31 @@ async function render() {
     <p>${escape(session.email)} · ${escape(session.role)}</p></div>
     <form id="sign-out"><button>Sign out</button></form></div>
     <p><a href="/app">Rentals and billing</a> · <a href="/activity">Activity</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a> · <a href="/leads">Web leads</a> · <a href="/analytics">Analytics</a> · <a href="/operations">Operations</a></p><div id="dashboard"></div>`;
+  if (session.platformAdmin) {
+    const link = document.createElement('a');
+    link.href = '/admin';
+    link.textContent = 'Platform admin';
+    document.querySelector('#dashboard').before(link);
+  }
+  if (location.pathname === '/admin') {
+    const data = await request('admin');
+    const states = (values) => '<label>Status<select name="state">' + values.map(value =>
+      '<option>' + value + '</option>').join('') + '</select></label>';
+    const action = value => '<input type="hidden" name="action" value="' + value + '">';
+    const accounts = data.accounts.map(row => ({ ...row, label: row.name + ' · ' + row.state }));
+    const users = data.users.map(row => ({ ...row, label: row.email + ' · ' + row.workspace + ' · ' +
+      row.role + ' · ' + (row.disabled ? 'disabled' : 'enabled') }));
+    document.querySelector('#dashboard').innerHTML = '<h2>Platform administration</h2><div class="grid">' +
+      form('Workspace approval', 'admin', action('workspace') + select('id', 'Workspace', accounts, 'id', 'label') +
+        states(['approved', 'pending', 'suspended']), 'Save approval status') +
+      form('User access', 'admin', action('user') + select('id', 'User', users, 'id', 'label') +
+        states(['enabled', 'disabled']), 'Save user status') +
+      '<section><h2>Twilio Voice</h2><p>' + (data.voice.configured ? 'Credentials configured' : 'Credentials missing') +
+        ' · Inbound voice ' + (data.voice.paused ? 'paused' : 'enabled') + '</p>' +
+        '<form data-action="admin">' + action('voice') + states(['enabled', 'paused']) +
+        '<button>Save voice status</button></form></section></div>';
+    return;
+  }
   if (location.pathname === '/call') {
     const id = new URLSearchParams(location.search).get('id') ?? '';
     const call = await request('call-detail?id=' + encodeURIComponent(id));

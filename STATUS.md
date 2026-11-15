@@ -1,5 +1,7 @@
 # Ringonyx build status
 
+Platform admin console implemented locally. It manages workspace sign-in approval, user access, and the Twilio inbound voice switch. Render activation requires setting `RINGONYX_ADMIN_EMAIL` to the existing owner email.
+
 Update this file after each feature. Record changes and verification in [RECORD_REGISTER.md](RECORD_REGISTER.md).
 
 Phase 2 local acceptance passed on 2026-11-11. Carrier integration and live acceptance remain deferred.
