@@ -12,6 +12,7 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   const env = { ...process.env, PORT: '0', NODE_ENV: 'production', RINGONYX_DB: join(directory, 'test.sqlite'), RINGONYX_OPERATOR_KEY: 'ignored-in-production' };
   const password = 'test-password-for-accounts';
   env.RINGONYX_ADMIN_EMAIL = 'owner@example.test';
+  env.RINGONYX_ADMIN_HOST = 'admin.example.test';
   const provision = (...args) => {
     const result = spawnSync(process.execPath, ['server.mjs', '--provision', ...args], { env, input: password, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
@@ -32,10 +33,29 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   child = spawn(process.execPath, ['server.mjs'], { env });
   const [message] = await once(child.stdout, 'data', { signal: AbortSignal.timeout(10000) });
   const origin = message.toString().trim().split(' ').at(-1);
-  async function api(path, { cookie, body, status = 200 } = {}) {
+  async function api(path, { cookie, body, status = 200, adminHost = path === 'admin' } = {}) {
+    if (adminHost) {
+      return new Promise((resolve, reject) => {
+        const req = httpRequest(origin + '/api/' + path, {
+          method: body ? 'POST' : 'GET',
+          headers: { Host: env.RINGONYX_ADMIN_HOST, ...(cookie ? { Cookie: cookie } : {}) }
+        }, async res => {
+          try {
+            let raw = '';
+            for await (const chunk of res) raw += chunk;
+            const data = JSON.parse(raw);
+            assert.equal(res.statusCode, status, raw);
+            resolve({ data, response: { headers: { get: name => res.headers[name]?.[0] } } });
+          } catch (error) { reject(error); }
+        });
+        req.on('error', reject);
+        req.end(body && JSON.stringify(body));
+      });
+    }
     const response = await fetch(origin + '/api/' + path, {
       method: body ? 'POST' : 'GET',
-      headers: { ...(cookie ? { Cookie: cookie } : {}), 'X-Ringonyx-Operator': 'ignored-in-production' },
+      headers: { ...(cookie ? { Cookie: cookie } : {}),
+        'X-Ringonyx-Operator': 'ignored-in-production' },
       body: body && JSON.stringify(body)
     });
     const data = await response.json();
@@ -59,6 +79,11 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   const viewer = await signIn('viewer@example.test');
   const other = await signIn('other@example.test');
   await api('admin', { cookie: other, status: 403 });
+  await api('admin', { cookie: owner, adminHost: false, status: 404 });
+  await api('sites', { cookie: owner, adminHost: true, status: 404 });
+  await api('login', { body: { email: 'other@example.test', password }, adminHost: true, status: 403 });
+  const adminLogin = await api('login', { body: { email: 'owner@example.test', password }, adminHost: true });
+  assert.doesNotMatch(adminLogin.response.headers.get('set-cookie'), /Domain=/i);
   assert.equal((await api('admin', { cookie: owner })).data.voice.configured, false);
   const post = async (cookie, path, body, status = 201) => (await api(path, { cookie, body, status })).data;
   const number = '+16025550100';
@@ -518,3 +543,4 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   await post(owner, 'logout', {}, 200);
   await api('session', { cookie: owner, status: 401 });
 });
+import { request as httpRequest } from 'node:http';

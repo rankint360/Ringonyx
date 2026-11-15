@@ -88,4 +88,6 @@
 
 | 2026-11-14 | Platform administration | Added an administrator-only console for user access, workspace approval, and Twilio configuration status and inbound controls. | Integration coverage checks administrator isolation and disabled-user session revocation. |
 
+| 2026-11-15 | Platform administration | Restricted admin routes to a configured hostname and admin sign-in to the designated owner. | All three integration tests passed, including host separation, customer sign-in rejection, and host-only cookies. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

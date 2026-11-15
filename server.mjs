@@ -77,6 +77,9 @@ if (process.argv[2] === '--provision') {
 const production = process.env.NODE_ENV === 'production';
 const access = accountAccess(db, { secure: production });
 const adminEmail = process.env.RINGONYX_ADMIN_EMAIL?.trim().toLowerCase();
+const adminHost = process.env.RINGONYX_ADMIN_HOST?.trim().toLowerCase();
+const adminPaths = new Set(['/admin', '/api/admin', '/api/session', '/api/login', '/api/logout', '/app.js',
+  '/style.css', '/brand.css', '/ringonyx-mark.svg', '/brand/favicons/favicon-32.png', '/brand/favicons/favicon-180.png']);
 const isAdmin = user => Boolean(adminEmail && user?.email === adminEmail && user.role === 'owner' && !user.renter);
 db.exec(`
   CREATE TABLE IF NOT EXISTS platform_review (account TEXT PRIMARY KEY REFERENCES accounts(id), state TEXT NOT NULL);
@@ -288,6 +291,15 @@ const server = createServer(async (req, res) => {
   };
   try {
     const { pathname } = new URL(req.url, 'http://localhost');
+    const adminOrigin = Boolean(adminHost && req.headers.host?.toLowerCase().replace(/:\d+$/, '') === adminHost);
+    if ((!adminOrigin && ['/admin', '/api/admin'].includes(pathname)) ||
+        (adminOrigin && pathname !== '/' && pathname !== '/health' && !adminPaths.has(pathname))) {
+      fail('Unknown endpoint', 404);
+    }
+    if (adminOrigin && pathname === '/') {
+      res.writeHead(302, { Location: '/admin' });
+      return res.end();
+    }
     if (req.method === 'GET' && pathname === '/health') {
       query('SELECT 1');
       return json({ status: 'ok' });
@@ -349,7 +361,7 @@ const server = createServer(async (req, res) => {
       return json({ renter: renter.name, brand: ops.brand(renter.account), invoices: invoices.forRenter(renter.id), calls });
     }
     if (req.method === 'POST' && pathname === '/api/login') {
-      return json(access.login(req, res, await body(req), fail));
+      return json(access.login(req, res, await body(req), fail, adminOrigin ? isAdmin : undefined));
     }
     if (req.method === 'POST' && pathname === '/api/logout') {
       access.logout(req, res);
@@ -398,7 +410,8 @@ const server = createServer(async (req, res) => {
       }));
     }
     if (req.method === 'GET' && pathname === '/api/session') {
-      return json({ email: user.email, role: user.renter ? 'renter' : user.role, workspace: user.workspace, platformAdmin: isAdmin(user) });
+      if (adminOrigin && !isAdmin(user)) fail('Platform administrator access required.', 403);
+      return json({ email: user.email, role: user.renter ? 'renter' : user.role, workspace: user.workspace });
     }
     if (req.method === 'POST' && user.role === 'viewer') fail('This account has read-only access.', 403);
     if (user.renter) fail('Use your renter portal.', 403);

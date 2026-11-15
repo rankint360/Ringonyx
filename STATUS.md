@@ -1,6 +1,6 @@
 # Ringonyx build status
 
-Platform admin console implemented locally. It manages workspace sign-in approval, user access, and the Twilio inbound voice switch. Render activation requires setting `RINGONYX_ADMIN_EMAIL` to the existing owner email.
+Platform admin console manages workspace sign-in approval, user access, and the Twilio inbound voice switch. Admin routes require both the designated owner account and the exact hostname configured in `RINGONYX_ADMIN_HOST`. The custom domain and DNS still need to be configured in Render.
 
 Update this file after each feature. Record changes and verification in [RECORD_REGISTER.md](RECORD_REGISTER.md).
 

@@ -214,13 +214,8 @@ async function render() {
     <p>${escape(session.email)} · ${escape(session.role)}</p></div>
     <form id="sign-out"><button>Sign out</button></form></div>
     <p><a href="/app">Rentals and billing</a> · <a href="/activity">Activity</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a> · <a href="/leads">Web leads</a> · <a href="/analytics">Analytics</a> · <a href="/operations">Operations</a></p><div id="dashboard"></div>`;
-  if (session.platformAdmin) {
-    const link = document.createElement('a');
-    link.href = '/admin';
-    link.textContent = 'Platform admin';
-    document.querySelector('#dashboard').before(link);
-  }
   if (location.pathname === '/admin') {
+    document.querySelector('.workspace-header + p')?.remove();
     const data = await request('admin');
     const states = (values) => '<label>Status<select name="state">' + values.map(value =>
       '<option>' + value + '</option>').join('') + '</select></label>';

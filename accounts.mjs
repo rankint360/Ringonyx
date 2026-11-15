@@ -114,7 +114,7 @@ export function accountAccess(db, { secure }) {
         throw error;
       }
     },
-    login(req, res, data, fail) {
+    login(req, res, data, fail, allowed = () => true) {
       const now = Date.now();
       for (const [key, entry] of attempts) if (entry.expires <= now) attempts.delete(key);
       const address = req.socket.remoteAddress;
@@ -127,6 +127,7 @@ export function accountAccess(db, { secure }) {
       const user = findUser.get(email);
       const valid = timingSafeEqual(derive(password, user?.salt || 'ringonyx-sign-in'), user ? Buffer.from(user.hash, 'hex') : dummy);
       if (!user || !valid) fail('Invalid email or password.', 401);
+      if (!allowed(user)) fail('Platform administrator access required.', 403);
       if (db.prepare('SELECT user FROM platform_disabled_users WHERE user=?').get(user.id) ||
           db.prepare("SELECT account FROM platform_review WHERE account=? AND state<>'approved'").get(user.account)) {
         fail('Account access is restricted.', 403);
