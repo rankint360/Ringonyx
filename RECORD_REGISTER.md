@@ -90,4 +90,6 @@
 
 | 2026-11-15 | Platform administration | Restricted admin routes to a configured hostname and admin sign-in to the designated owner. | All three integration tests passed, including host separation, customer sign-in rejection, and host-only cookies. |
 
+| 2026-11-22 | Console redesign | Added screenshot-referenced sidebar and overview, calls, numbers, dialer queue, messages, and reports views. | JavaScript syntax checks and all three integration tests passed. Visual browser verification and remaining screenshot controls are pending. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

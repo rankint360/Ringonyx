@@ -1,5 +1,7 @@
 # Ringonyx build status
 
+Screenshot-based console work adds a dark orange sidebar layout and data-backed overview, call search and filters, number inventory, callback requests, message search, and reports. Full screenshot parity remains open for number purchasing, wallet funding, two-factor enrollment, report heatmaps, and advanced report controls. Browser visual acceptance is pending.
+
 Platform admin console manages workspace sign-in approval, user access, and the Twilio inbound voice switch. Admin routes require both the designated owner account and the exact hostname configured in `RINGONYX_ADMIN_HOST`. The custom domain and DNS still need to be configured in Render.
 
 Update this file after each feature. Record changes and verification in [RECORD_REGISTER.md](RECORD_REGISTER.md).

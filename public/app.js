@@ -1,3 +1,4 @@
+import { mountConsole, renderConsole } from './console.js';
 const app = document.querySelector('#app');
 const status = document.querySelector('#status');
 const portal = new URLSearchParams(location.search).get('token');
@@ -210,10 +211,12 @@ async function render() {
     return;
   }
   const canWrite = session.role !== 'viewer';
+  if (location.pathname !== '/admin') mountConsole(session);
   app.innerHTML = `<div class="workspace-header"><div><h1>${escape(session.workspace)}</h1>
     <p>${escape(session.email)} · ${escape(session.role)}</p></div>
     <form id="sign-out"><button>Sign out</button></form></div>
     <p><a href="/app">Rentals and billing</a> · <a href="/activity">Activity</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a> · <a href="/leads">Web leads</a> · <a href="/analytics">Analytics</a> · <a href="/operations">Operations</a></p><div id="dashboard"></div>`;
+  if (await renderConsole({ request, escape, money, history, session })) return;
   if (location.pathname === '/admin') {
     document.querySelector('.workspace-header + p')?.remove();
     const data = await request('admin');

@@ -78,7 +78,7 @@ const production = process.env.NODE_ENV === 'production';
 const access = accountAccess(db, { secure: production });
 const adminEmail = process.env.RINGONYX_ADMIN_EMAIL?.trim().toLowerCase();
 const adminHost = process.env.RINGONYX_ADMIN_HOST?.trim().toLowerCase();
-const adminPaths = new Set(['/admin', '/api/admin', '/api/session', '/api/login', '/api/logout', '/app.js',
+const adminPaths = new Set(['/admin', '/api/admin', '/api/session', '/api/login', '/api/logout', '/app.js', '/console.js', '/console.css',
   '/style.css', '/brand.css', '/ringonyx-mark.svg', '/brand/favicons/favicon-32.png', '/brand/favicons/favicon-180.png']);
 const isAdmin = user => Boolean(adminEmail && user?.email === adminEmail && user.role === 'owner' && !user.renter);
 db.exec(`
@@ -256,6 +256,14 @@ const ops = operations(db, { query, run, transaction, required, fail, now, addSi
   readSites: account => query(routes.sites, account),
   campaigns: account => insights.report(account).campaigns });
 const assets = {
+  '/overview': ['index.html', 'text/html'],
+  '/calls': ['index.html', 'text/html'],
+  '/numbers': ['index.html', 'text/html'],
+  '/dialer': ['index.html', 'text/html'],
+  '/messages': ['index.html', 'text/html'],
+  '/reports': ['index.html', 'text/html'],
+  '/console.js': ['console.js', 'text/javascript'],
+  '/console.css': ['console.css', 'text/css'],
   '/admin': ['index.html', 'text/html'],
   '/call': ['index.html', 'text/html'],
   '/activity': ['index.html', 'text/html'],
