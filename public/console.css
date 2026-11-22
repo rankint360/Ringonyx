@@ -55,3 +55,14 @@
 .workspace-console .grid { gap:16px; }
 @media(max-width:1000px) { .console-sidebar { width:210px; } .console-top { left:210px; } .workspace-console main { margin-left:210px; padding:90px 20px; } .metric-grid { grid-template-columns:repeat(2,1fr); } }
 @media(max-width:700px) { .console-sidebar { position:static; width:auto; height:auto; } .console-sidebar nav { flex-direction:row; flex-wrap:wrap; } .console-sidebar .nav-group,.console-user,.workspace-switch,.getting-started { display:none; } .console-top { position:static; padding:12px; height:auto; } .workspace-console main { margin:0; padding:20px 14px; } .report-grid,.setup-grid { grid-template-columns:1fr; } .console-logo { padding-bottom:10px; } }
+
+.settings-tabs { display:flex; gap:24px; flex-wrap:wrap; margin:24px 0 30px; border-bottom:1px solid #29292d; }
+.settings-tabs a { padding:0 0 15px; color:#96969f; }
+.settings-tabs a.active { color:white; border-bottom:2px solid #fa7912; }
+.plan-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+.integration-row { padding:22px; border:1px solid #29292d; background:#141416; margin:0; }
+.integration-row span { float:right; color:#96969f; font-size:12px; }
+.workspace-console form label { display:grid; gap:7px; margin:12px 0; font-size:14px; }
+.workspace-console form input,.workspace-console form select { width:100%; }
+.workspace-console a:focus-visible,.workspace-console button:focus-visible { outline:2px solid #fa7912; outline-offset:4px; }
+@media(max-width:800px) { .plan-grid { grid-template-columns:1fr; } }

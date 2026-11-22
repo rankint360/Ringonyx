@@ -92,4 +92,6 @@
 
 | 2026-11-22 | Console redesign | Added screenshot-referenced sidebar and overview, calls, numbers, dialer queue, messages, and reports views. | JavaScript syntax checks and all three integration tests passed. Visual browser verification and remaining screenshot controls are pending. |
 
+| 2026-11-22 | Screenshot management | Added settings and customer management views, team invitations, profile/password/session controls, authenticator setup and recovery, and number filters. | Four tests passed, including an RFC TOTP vector, replay/recovery checks, invitation scope, owner restrictions, and archived-customer assignment prevention. Visual acceptance remains pending. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

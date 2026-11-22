@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { security } from './security.mjs';
 
 const lifetime = 12 * 60 * 60 * 1000;
 const cookieName = 'ringonyx_session';
@@ -65,6 +66,7 @@ export function provision(db, { account, name, email, password, role }) {
 }
 
 export function accountAccess(db, { secure }) {
+  const factors = security(db);
   const attempts = new Map();
   const findUser = db.prepare(`SELECT u.*, a.name AS workspace FROM users u JOIN accounts a ON a.id=u.account WHERE u.email=?`);
   const findSession = db.prepare(`SELECT u.id, u.email, u.account, u.role, a.name AS workspace, ru.renter
@@ -127,6 +129,7 @@ export function accountAccess(db, { secure }) {
       const user = findUser.get(email);
       const valid = timingSafeEqual(derive(password, user?.salt || 'ringonyx-sign-in'), user ? Buffer.from(user.hash, 'hex') : dummy);
       if (!user || !valid) fail('Invalid email or password.', 401);
+      if (factors.enabled(user.id) && !factors.verify(user.id, data.code)) fail('Enter a valid authenticator or recovery code.', 401);
       if (!allowed(user)) fail('Platform administrator access required.', 403);
       if (db.prepare('SELECT user FROM platform_disabled_users WHERE user=?').get(user.id) ||
           db.prepare("SELECT account FROM platform_review WHERE account=? AND state<>'approved'").get(user.account)) {

@@ -1,4 +1,5 @@
 import { mountConsole, renderConsole } from './console.js';
+import { renderManagement } from './manage.js';
 const app = document.querySelector('#app');
 const status = document.querySelector('#status');
 const portal = new URLSearchParams(location.search).get('token');
@@ -154,6 +155,13 @@ function renderNetwork(dashboard, data, canWrite) {
     '<section><h2>Network call ledger</h2>' + networkTable(data.calls) + '</section>';
 }
 async function render() {
+  const teamInvite = location.pathname === '/settings' && new URLSearchParams(location.hash.slice(1)).get('invite');
+  if (teamInvite) {
+    app.innerHTML = '<h1>Accept team invitation</h1>' + form('Create your password','team-accept',
+      '<input type="hidden" name="token" value="' + escape(teamInvite) + '">' +
+      field('password','Password','type="password" minlength="14" autocomplete="new-password"'),'Accept invitation');
+    return;
+  }
   if (location.pathname === '/partner') {
     const kind = new URLSearchParams(location.search).get('kind');
     if (!portal || !['buyer', 'publisher'].includes(kind)) throw Error('Open the partner link provided by your operator.');
@@ -203,6 +211,7 @@ async function render() {
     app.innerHTML = `<h1>Sign in</h1><section class="sign-in"><form id="access">
       ${field('email', 'Email', 'type="email" autocomplete="username"')}
       ${field('password', 'Password', 'type="password" autocomplete="current-password"')}
+      <label>Authenticator or recovery code (if enabled)<input name="code" autocomplete="one-time-code"></label>
       <button>Sign in</button></form></section>`;
     return;
   }
@@ -217,6 +226,7 @@ async function render() {
     <form id="sign-out"><button>Sign out</button></form></div>
     <p><a href="/app">Rentals and billing</a> · <a href="/activity">Activity</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a> · <a href="/leads">Web leads</a> · <a href="/analytics">Analytics</a> · <a href="/operations">Operations</a></p><div id="dashboard"></div>`;
   if (await renderConsole({ request, escape, money, history, session })) return;
+  if (await renderManagement({ request, escape, money, session, form, field, select, invoiceList, networkInvoices, networkTable })) return;
   if (location.pathname === '/admin') {
     document.querySelector('.workspace-header + p')?.remove();
     const data = await request('admin');
@@ -546,6 +556,24 @@ app.addEventListener('submit', async event => {
         });
       }
       const result = await request(action === 'complete' ? 'calls/' + encodeURIComponent(data.id) + '/complete' : action, data);
+      if (action === 'management/totp-setup') {
+        status.textContent = 'Enter this key in your authenticator app: ' + result.secret +
+          '. Then submit the six-digit code below to confirm.';
+        return;
+      }
+      if (action === 'management/totp-enable') {
+        status.textContent = 'Save your single-use recovery code privately: ' + result.recovery + '. Sign in again after saving it.';
+        return;
+      }
+      if (action === 'management/invite') {
+        status.textContent = 'Share this invitation: ' + location.origin + '/settings#invite=' + result.token;
+        return;
+      }
+      if (action === 'team-accept') window.history.replaceState(null, '', '/settings');
+      if (result.signedOut) {
+        location.assign('/app');
+        return;
+      }
       if (action === 'renter-accept') {
         window.history.replaceState(null, '', '/portal');
       }

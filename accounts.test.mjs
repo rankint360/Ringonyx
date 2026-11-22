@@ -540,6 +540,18 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   await post(owner, 'admin', { action: 'user', id: otherId, state: 'disabled' }, 200);
   await api('sites', { cookie: other, status: 401 });
   await api('login', { body: { email: 'other@example.test', password }, status: 403 });
+  await post(viewer, 'management/business', { name: 'Denied', timezone: 'UTC' }, 403);
+  await post(owner, 'management/business', { name: 'First workspace', timezone: 'America/Los_Angeles', terms: 'cancel, lawsuit' }, 200);
+  assert.equal((await api('management', { cookie: owner })).data.business.alert_terms, 'cancel, lawsuit');
+  await post(owner, 'management/business', { name: 'First workspace', timezone: 'Invalid/Zone' }, 400);
+  const teamInvitation = await post(owner, 'management/invite', { email: 'teammate@example.test', role: 'viewer' }, 200);
+  await post(undefined, 'team-accept', { token: teamInvitation.token, password }, 200);
+  await post(undefined, 'team-accept', { token: teamInvitation.token, password }, 404);
+  const memberSession = await signIn('teammate@example.test');
+  await post(memberSession, 'sites', { name: 'Denied', number: '+16025550888' }, 403);
+  await post(owner, 'management/customer-state', { kind: 'renter', id: renter.id, state: 'archived' }, 200);
+  await post(owner, 'assignments', assignment, 409);
+  await post(owner, 'management/customer-state', { kind: 'renter', id: renter.id, state: 'active' }, 200);
   await post(owner, 'logout', {}, 200);
   await api('session', { cookie: owner, status: 401 });
 });

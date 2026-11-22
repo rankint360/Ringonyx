@@ -1,4 +1,5 @@
 import { accountAccess, initializeAccounts, provision } from './accounts.mjs';
+import { management } from './management.mjs';
 import { billing, initializeBilling } from './billing.mjs';
 import { network } from './network.mjs';
 import { webLeads } from './leads.mjs';
@@ -78,7 +79,7 @@ const production = process.env.NODE_ENV === 'production';
 const access = accountAccess(db, { secure: production });
 const adminEmail = process.env.RINGONYX_ADMIN_EMAIL?.trim().toLowerCase();
 const adminHost = process.env.RINGONYX_ADMIN_HOST?.trim().toLowerCase();
-const adminPaths = new Set(['/admin', '/api/admin', '/api/session', '/api/login', '/api/logout', '/app.js', '/console.js', '/console.css',
+const adminPaths = new Set(['/admin', '/api/admin', '/api/session', '/api/login', '/api/logout', '/app.js', '/console.js', '/manage.js', '/console.css',
   '/style.css', '/brand.css', '/ringonyx-mark.svg', '/brand/favicons/favicon-32.png', '/brand/favicons/favicon-180.png']);
 const isAdmin = user => Boolean(adminEmail && user?.email === adminEmail && user.role === 'owner' && !user.renter);
 db.exec(`
@@ -179,6 +180,9 @@ function write(entity, data, account) {
     if (!query('SELECT id FROM sites WHERE id=? AND account=?', site, account).length ||
         !query('SELECT id FROM renters WHERE id=? AND account=?', renter, account).length) fail('Unknown site or renter', 404);
     const rate = whole(data.rate, 1000000);
+    if (query("SELECT party FROM customer_states WHERE account=? AND kind='renter' AND party=? AND state<>'active'", account, renter).length) {
+      fail('Activate the renter before assigning calls.', 409);
+    }
     const minimum = whole(data.minimum, 86400);
     const at = now();
     return transaction(() => {
@@ -255,7 +259,15 @@ const insights = analytics(db, { query, run, required, fail, now });
 const ops = operations(db, { query, run, transaction, required, fail, now, addSite,
   readSites: account => query(routes.sites, account),
   campaigns: account => insights.report(account).campaigns });
+const manager = management(db, { query, run, transaction, required, fail, now });
 const assets = {
+  '/settings': ['index.html', 'text/html'],
+  '/websites': ['index.html', 'text/html'],
+  '/renters': ['index.html', 'text/html'],
+  '/buyers': ['index.html', 'text/html'],
+  '/handling': ['index.html', 'text/html'],
+  '/invoices': ['index.html', 'text/html'],
+  '/manage.js': ['manage.js', 'text/javascript'],
   '/overview': ['index.html', 'text/html'],
   '/calls': ['index.html', 'text/html'],
   '/numbers': ['index.html', 'text/html'],
@@ -334,6 +346,7 @@ const server = createServer(async (req, res) => {
       return res.end(readFileSync(new URL('./public/' + file, import.meta.url)));
     }
     const portal = /^\/api\/portal\/([\w-]+)$/.exec(pathname);
+    if (req.method === 'POST' && pathname === '/api/team-accept') return json(manager.accept(await body(req)));
     if (req.method === 'POST' && pathname === '/api/renter-accept') {
       const data = await body(req);
       return json(access.accept(required(data.invite, 'invitation'), data.password, fail));
@@ -420,6 +433,12 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && pathname === '/api/session') {
       if (adminOrigin && !isAdmin(user)) fail('Platform administrator access required.', 403);
       return json({ email: user.email, role: user.renter ? 'renter' : user.role, workspace: user.workspace });
+    }
+    if (!user.renter && pathname === '/api/management' && req.method === 'GET') return json(manager.read(user));
+    if (!user.renter && req.method === 'POST' && pathname.startsWith('/api/management/')) {
+      const result = manager.write(user, pathname.slice('/api/management/'.length), await body(req));
+      ops.audit(user, pathname);
+      return json(result);
     }
     if (req.method === 'POST' && user.role === 'viewer') fail('This account has read-only access.', 403);
     if (user.renter) fail('Use your renter portal.', 403);

@@ -1,9 +1,9 @@
 const links = [
   ['Home', '/overview', '⌂'], ['Calls', '/calls', '↙'], ['Dialer', '/dialer', '♧'],
   ['Messages', '/messages', '□'], ['Leads', '/leads', '▤'], ['Reports', '/reports', '▦'],
-  ['Numbers', '/numbers', '#'], ['Websites', '/app', '◎'], ['Tenants / Renters', '/app#renters', '♙'],
-  ['Buyers', '/network', '▥'], ['Call handling', '/app#routing', '⑂'],
-  ['Invoices', '/app#invoices', '▧'], ['Settings', '/operations', '☷']
+  ['Numbers', '/numbers', '#'], ['Websites', '/websites', '◎'], ['Tenants / Renters', '/renters', '♙'],
+  ['Buyers', '/buyers', '▥'], ['Call handling', '/handling', '⑂'],
+  ['Invoices', '/invoices', '▧'], ['Settings', '/settings', '☷']
 ];
 const encode = value => String(value ?? '').replace(/[&<>"']/g, ch =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
@@ -121,19 +121,30 @@ export async function renderConsole({ request, escape: e, money, history }) {
     document.querySelector('#export').onclick = () => download(filtered);
     draw();
   } else if (path === '/numbers') {
+    const assignments = await request('assignments');
+    const renters = await request('renters');
+    const active = site => assignments.find(row => row.site === site.id && !row.ended);
     dashboard.innerHTML = title('Numbers', sites.length + ' registered tracking numbers') +
       '<div class="console-toolbar"><input id="number-search" placeholder="Search by number or name" aria-label="Search numbers">' +
+      '<select id="number-filter" aria-label="Number status"><option value="">All numbers</option><option value="unset">Not set up</option>' +
+      '<option value="renter">Tenants / Renters</option><option value="inactive">No calls in 60 days</option></select>' +
       '<a class="console-button" href="/communications">Porting and number setup</a></div><div id="number-results"></div>';
     const draw = () => {
       const term = document.querySelector('#number-search').value.toLowerCase();
-      document.querySelector('#number-results').innerHTML = panel(table(['Number', 'Name', 'Calls', 'Last call', 'Status'],
-        sites.filter(site => (site.number + site.name).toLowerCase().includes(term)).map(site => {
+      const filter = document.querySelector('#number-filter').value;
+      document.querySelector('#number-results').innerHTML = panel(table(['Number', 'Name', 'Calls go to', 'Calls (30 days)', 'Last call', 'Status'],
+        sites.filter(site => (site.number + site.name + (site.voice_source || '')).toLowerCase().includes(term))
+          .filter(site => !filter || (filter === 'unset' ? !active(site) : filter === 'renter' ? Boolean(active(site)) :
+            !calls.some(call => call.site === site.id && Date.now() - Date.parse(call.created) < 60 * 86400000))).map(site => {
           const activity = calls.filter(call => call.site === site.id);
-          return [e(site.number), e(site.name), activity.length, activity[0] ? e(new Date(activity[0].created).toLocaleString()) : '—',
+          return [e(site.number), e(site.name), e(renters.find(row => row.id === active(site)?.renter)?.name || 'Not assigned'),
+            activity.filter(call => Date.now() - Date.parse(call.created) < 30 * 86400000).length,
+            activity[0] ? e(new Date(activity[0].created).toLocaleString()) : '—',
             site.voice_source ? 'Carrier source configured' : 'Local setup'];
         }), 'No numbers yet. <a href="/communications">Set up a tracking number →</a>'));
     };
     document.querySelector('#number-search').oninput = draw;
+    document.querySelector('#number-filter').onchange = draw;
     draw();
   } else {
     const data = await request('communications');
