@@ -4,14 +4,15 @@ const links = [
   ['Messages', '/messages', '□'], ['Leads', '/leads', '▤'], ['Reports', '/reports', '▦'],
   ['Numbers', '/numbers', '#'], ['Websites', '/websites', '◎'], ['Tenants / Renters', '/renters', '♙'],
   ['Buyers', '/buyers', '▥'], ['Call handling', '/handling', '⑂'],
-  ['Invoices', '/invoices', '▧'], ['Settings', '/settings', '☷']
+  ['Invoices', '/invoices', '▧'], ['Settings', '/settings', '☷'], ['Workspace tools','/workspace-tools','⚙']
 ];
 const encode = value => String(value ?? '').replace(/[&<>"']/g, ch =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 export function mountConsole(session) {
   document.body.classList.add('workspace-console');
   let sidebar = document.querySelector('.console-sidebar');
-  if (sidebar) return;
+  sidebar?.remove();
+  document.querySelector('.console-top')?.remove();
   sidebar = document.createElement('aside');
   sidebar.className = 'console-sidebar';
   sidebar.innerHTML = '<a class="console-logo" href="/overview">◔ <strong>ringonyx</strong></a>' +
@@ -35,6 +36,11 @@ export function mountConsole(session) {
   });
   document.body.prepend(top);
 }
+export function unmountConsole() {
+  document.querySelector('.console-sidebar')?.remove();
+  document.querySelector('.console-top')?.remove();
+  document.body.classList.remove('workspace-console');
+}
 function table(headers, rows, empty) {
   return '<div class="console-table"><table><thead><tr>' + headers.map(h => '<th>' + h + '</th>').join('') +
     '</tr></thead><tbody>' + rows.map(row => '<tr>' + row.map(value => '<td>' + value + '</td>').join('') +
@@ -51,18 +57,35 @@ function download(rows) {
   link.click();
   URL.revokeObjectURL(url);
 }
-export async function renderConsole({ request, escape: e, money, history }) {
+export async function renderConsole({ request, escape: e, money, history, session }) {
   const path = location.pathname;
   if (!['/overview', '/calls', '/numbers', '/dialer', '/messages', '/reports'].includes(path)) return false;
   const dashboard = document.querySelector('#dashboard');
   const [calls, sites] = await Promise.all([request('calls'), request('sites')]);
-  const timezone = (await request('management')).business.timezone;
+  const settings = await request('management');
+  const timezone = settings.business.timezone;
   const title = (heading, description) => '<h1>' + heading + '</h1><p class="console-muted">' + description + '</p>';
   const panel = content => '<section class="console-panel">' + content + '</section>';
   const tools = '<div class="console-toolbar"><label>Date range <select id="period"><option value="7">7 days</option>' +
     '<option value="1">Today</option><option value="2">Yesterday</option><option value="30">30 days</option>' +
-    '<option value="0">All time</option></select></label><button id="export">↓ CSV</button></div>';
+    '<option value="0">All time</option><option value="month">This month</option><option value="last-month">Last month</option>' +
+    '<option value="custom">Custom dates</option></select></label>' +
+    '<label>From<input type="date" id="report-start"></label><label>Through<input type="date" id="report-end"></label>' +
+    '<button type="button" id="export">↓ CSV</button></div>' +
+    '<div class="console-toolbar"><select id="saved-view" aria-label="Saved report view"><option value="">Saved views</option>' +
+    settings.reportViews.map(row=>'<option value="'+e(row.name)+'">'+e(row.name)+'</option>').join('')+'</select>' +
+    (session.role!=='viewer'?'<input id="view-name" aria-label="View name" placeholder="View name"><button type="button" id="save-view">Save view</button>':'')+'</div>'+
+    '<input type="hidden" id="report-columns" value="0,1,2,3,4,5,6"><details><summary>Call log columns</summary><div class="console-toolbar">'+
+    ['Time','Site','Renter','Source','Outcome','Seconds','Charge'].map((label,index)=>'<label><input type="checkbox" data-call-column="'+index+'" checked>'+label+'</label>').join('')+'</div></details>';
   let filtered = calls;
+  function applyColumns() {
+    const selected=(document.getElementById('report-columns')?.value||'0,1,2,3,4,5,6').split(',');
+    for (const checkbox of document.querySelectorAll('[data-call-column]')) checkbox.checked=selected.includes(checkbox.dataset.callColumn);
+    for (const row of document.querySelectorAll('#dashboard .scroll table tr')) {
+      if (row.cells.length===1) row.cells[0].colSpan=selected.length;
+      else for (let index=0;index<row.cells.length;index++) row.cells[index].hidden=!selected.includes(String(index));
+    }
+  }
   function heatmap(rows) {
     const buckets = Array.from({ length: 7 }, () => Array(24).fill(0));
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -83,7 +106,22 @@ export async function renderConsole({ request, escape: e, money, history }) {
       '</div><p id="heat-selection" role="status">Select a square to inspect its call count.</p>';
   }
   function dateFilter() {
-    const days = Number(document.querySelector('#period').value);
+    const period = document.querySelector('#period').value;
+    if (['month','last-month','custom'].includes(period)) {
+      let start=document.querySelector('#report-start').value, end=document.querySelector('#report-end').value;
+      const today=businessDay(new Date(),timezone);
+      if (period==='month') { start=today.slice(0,7)+'-01'; end=today; }
+      if (period==='last-month') {
+        const month=new Date(today.slice(0,7)+'-01T12:00:00Z');
+        month.setUTCDate(0);
+        end=month.toISOString().slice(0,10); start=end.slice(0,7)+'-01';
+      }
+      return calls.filter(call=>{
+        const day=businessDay(call.created,timezone);
+        return (!start||day>=start)&&(!end||day<=end);
+      });
+    }
+    const days = Number(period);
     return calls.filter(call => inDateRange(call.created, days, timezone));
   }
   if (path === '/overview' || path === '/reports') {
@@ -140,6 +178,7 @@ export async function renderConsole({ request, escape: e, money, history }) {
         groupControl.onchange = group;
         group();
       }
+      applyColumns();
     };
     document.querySelector('#period').addEventListener('change', draw);
     document.querySelector('#export').onclick = () => download(filtered);
@@ -156,8 +195,9 @@ export async function renderConsole({ request, escape: e, money, history }) {
       const billable = document.querySelector('#billable').value;
       filtered = dateFilter().filter(call => (!outcome || call.outcome === outcome) &&
         (!billable || (call.cents > 0) === (billable === 'yes')) &&
-        [call.site_name, call.source, call.simulated_destination].join(' ').toLowerCase().includes(search));
+        [call.site_name, call.source, call.simulated_destination,call.caller_number,call.caller_zip].join(' ').toLowerCase().includes(search));
       document.querySelector('#call-results').innerHTML = history(filtered, true);
+      applyColumns();
     };
     for (const id of ['period', 'call-search', 'outcome', 'billable']) document.getElementById(id).addEventListener('input', draw);
     document.querySelector('#export').onclick = () => download(filtered);
@@ -214,6 +254,44 @@ export async function renderConsole({ request, escape: e, money, history }) {
         panel('<h3>Recent callback requests</h3>' + table(['To', 'Site', 'State'], data.callbacks.map(row =>
           [e(row.destination), e(row.site_name), e(row.state)]), 'No callback requests yet.')) + '</div>';
     }
+  }
+  if (document.getElementById('period')) {
+    for (const checkbox of document.querySelectorAll('[data-call-column]')) checkbox.onchange=()=>{
+      const selected=[...document.querySelectorAll('[data-call-column]:checked')].map(item=>item.dataset.callColumn);
+      if (!selected.length) {checkbox.checked=true;return;}
+      document.getElementById('report-columns').value=selected.join(',');
+      applyColumns();
+    };
+    for (const id of ['report-start','report-end']) document.getElementById(id).onchange=()=>{
+      document.getElementById('period').value='custom';
+      document.getElementById('period').dispatchEvent(new Event(path==='/calls'?'input':'change'));
+    };
+    document.getElementById('saved-view').onchange=event=>{
+      const view=settings.reportViews.find(row=>row.name===event.target.value)?.config;
+      if (!view) return;
+      for (const [id,value] of Object.entries(view)) {
+        const control=document.getElementById(id);
+        if (control && typeof value==='string') control.value=value;
+      }
+      document.getElementById('period').dispatchEvent(new Event(path==='/calls'?'input':'change'));
+      if (view['report-group'] && document.getElementById('report-group')) {
+        document.getElementById('report-group').value=view['report-group'];
+        document.getElementById('report-group').dispatchEvent(new Event('change'));
+      }
+      applyColumns();
+    };
+    document.getElementById('save-view')?.addEventListener('click',async()=>{
+      try {
+        const config={};
+        for (const id of ['period','report-start','report-end','call-search','outcome','billable','report-group','report-columns']) {
+          const control=document.getElementById(id);
+          if (control) config[id]=control.value;
+        }
+        await request('management/report-view',{name:document.getElementById('view-name').value,config});
+        await renderConsole({request,escape:e,money,history,session});
+        document.getElementById('status').textContent='Report view saved.';
+      } catch(error) {document.getElementById('status').textContent=error.message;}
+    });
   }
   return true;
 }

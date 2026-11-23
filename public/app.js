@@ -1,5 +1,6 @@
-import { mountConsole, renderConsole } from './console.js';
+import { mountConsole, unmountConsole, renderConsole } from './console.js';
 import { renderManagement } from './manage.js';
+import { renderTools } from './tools.js';
 const app = document.querySelector('#app');
 const status = document.querySelector('#status');
 const portal = new URLSearchParams(location.search).get('token');
@@ -41,12 +42,15 @@ const select = (name, label, items, value, caption) => `<label>${label}<select r
 const form = (title, action, fields, button) => `<section><h2>${title}</h2><form data-action="${action}">${fields}<button>${button}</button></form></section>`;
 const routingScenario = '<label>Primary renter status<select name="scenario"><option value="normal">Available</option>' +
   '<option value="busy">Busy</option><option value="no-answer">No answer</option><option value="after-hours">After hours</option></select></label>' +
-  '<label>Caller number (optional)<input name="caller" placeholder="+16025550102"></label>';
+  '<label>Caller number (optional)<input name="caller" placeholder="+16025550102"></label>'+
+  '<label>Caller ZIP (optional)<input name="zip" pattern="[0-9]{5}"></label>'+
+  '<label>Simulation date/time (optional)<input name="at" type="datetime-local"></label>';
 function invoiceList(invoices) {
   return `<section><h2>Invoices</h2>${invoices.length ? '<ul>' + invoices.map(invoice =>
     `<li>${escape(invoice.renter_name)} · ${escape(new Date(invoice.created).toLocaleDateString())}
       · ${invoice.calls} qualified calls · <strong>${money(invoice.cents)}</strong>
-      · Balance ${money(invoice.cents - invoice.applied)}
+      · Balance ${money(invoice.voided ? 0 : invoice.cents - invoice.applied)}
+      ${invoice.voided ? ' · Void · ' + escape(invoice.void_reason) : ''}
       ${invoice.bookings ? ' · Bookings ' + invoice.bookings : ''}
       ${invoice.disputed ? ' · Disputed' : ''}
       ${invoice.period ? ' · ' + escape(invoice.period) + ' rent ' + money(invoice.rent) : ''}
@@ -84,7 +88,8 @@ function networkEvidence(call) {
 function networkInvoices(invoices) {
   return '<section><h2>Buyer invoices</h2>' + (invoices.map(invoice =>
     `<details><summary>${escape(invoice.buyer_name)} · ${escape(new Date(invoice.created).toLocaleDateString())}
-      · ${invoice.calls} calls · ${money(invoice.cents)} · Due ${money(invoice.cents - invoice.applied)}</summary>
+      · ${invoice.calls} calls · ${money(invoice.cents)} · Due ${money(invoice.voided ? 0 : invoice.cents - invoice.applied)}</summary>
+      ${invoice.voided ? '<p>Void · '+escape(invoice.void_reason)+'</p>' : ''}
       <p>Invoice ${escape(invoice.id)}</p>
       ${invoice.reason ? '<p>Dispute ' + (invoice.resolved ? 'resolved' : 'open') + ' · ' + escape(invoice.reason) + '</p>' : ''}
       ${invoice.resolution ? '<p>Resolution · ' + escape(invoice.resolution) + '</p>' : ''}
@@ -156,6 +161,20 @@ function renderNetwork(dashboard, data, canWrite) {
     '<section><h2>Network call ledger</h2>' + networkTable(data.calls) + '</section>';
 }
 async function render() {
+  if (location.pathname==='/register') {
+    app.innerHTML='<h1>Request a Ringonyx account</h1>'+form('Business details','register',
+      field('name','Business name')+field('email','Email','type="email"')+
+      field('password','Password','type="password" minlength="14" autocomplete="new-password"'),'Submit for approval');
+    return;
+  }
+  if (location.pathname === '/reset') {
+    const token=new URLSearchParams(location.hash.slice(1)).get('token');
+    app.innerHTML='<h1>Password recovery</h1>'+(token ? form('Choose a new password','password-reset/redeem',
+      '<input type="hidden" name="token" value="'+escape(token)+'">'+
+      field('password','New password','type="password" minlength="14" autocomplete="new-password"'),'Reset password') :
+      form('Request a reset email','password-reset/request',field('email','Email','type="email"'),'Request reset'));
+    return;
+  }
   const teamInvite = location.pathname === '/settings' && new URLSearchParams(location.hash.slice(1)).get('invite');
   if (teamInvite) {
     app.innerHTML = '<h1>Accept team invitation</h1>' + form('Create your password','team-accept',
@@ -201,7 +220,10 @@ async function render() {
     applyPortalBrand(result.brand);
     app.innerHTML = '<h1>' + escape(result.renter) + '</h1>' +
       (portal ? '' : '<form id="sign-out"><button>Sign out</button></form>') +
-      history(result.calls, false) + invoiceList(result.invoices);
+      history(result.calls, false) + invoiceList(result.invoices)+
+      '<section><h2>Recordings</h2>'+((result.recordings||[]).map(row=>'<p>'+escape(row.call)+' · '+escape(row.created)+'</p>'+
+        (row.deleted?'<p>Deleted by retention.</p>':'<audio controls preload="none" src="'+
+          (portal?'/api/portal-audio/'+encodeURIComponent(portal)+'/':'/api/renter-audio/')+encodeURIComponent(row.id)+'"></audio>')).join('')||'<p>No recordings yet.</p>')+'</section>';
     return;
   }
   let session;
@@ -209,11 +231,12 @@ async function render() {
     session = await request('session');
   } catch (error) {
     if (error.status !== 401) throw error;
+    unmountConsole();
     app.innerHTML = `<h1>Sign in</h1><section class="sign-in"><form id="access">
       ${field('email', 'Email', 'type="email" autocomplete="username"')}
       ${field('password', 'Password', 'type="password" autocomplete="current-password"')}
       <label>Authenticator or recovery code (if enabled)<input name="code" autocomplete="one-time-code"></label>
-      <button>Sign in</button></form></section>`;
+      <button>Sign in</button></form><p><a href="/reset">Forgot password?</a></p></section>`;
     return;
   }
   if (session.role === 'renter') {
@@ -228,6 +251,7 @@ async function render() {
     <p><a href="/app">Rentals and billing</a> · <a href="/activity">Activity</a> · <a href="/communications">Communications</a> · <a href="/network">Buyer and publisher network</a> · <a href="/leads">Web leads</a> · <a href="/analytics">Analytics</a> · <a href="/operations">Operations</a></p><div id="dashboard"></div>`;
   if (await renderConsole({ request, escape, money, history, session })) return;
   if (await renderManagement({ request, escape, money, session, form, field, select, invoiceList, networkInvoices, networkTable })) return;
+  if (await renderTools({ request, escape, money, session, form, field, select })) return;
   if (location.pathname === '/admin') {
     document.querySelector('.workspace-header + p')?.remove();
     const data = await request('admin');
@@ -245,7 +269,17 @@ async function render() {
       '<section><h2>Twilio Voice</h2><p>' + (data.voice.configured ? 'Credentials configured' : 'Credentials missing') +
         ' · Inbound voice ' + (data.voice.paused ? 'paused' : 'enabled') + '</p>' +
         '<form data-action="admin">' + action('voice') + states(['enabled', 'paused']) +
-        '<button>Save voice status</button></form></section></div>';
+        '<button>Save voice status</button></form></section>' +
+      form('Integration configuration','admin',action('integration')+
+        select('account','Workspace',data.accounts,'id','name')+
+        '<label>Provider<select name="provider">'+data.providers.map(provider=>'<option>'+escape(provider)+'</option>').join('')+'</select></label>'+
+        field('endpoint','HTTPS endpoint','type="url"')+
+        '<label>Secret (blank retains existing)<input name="secret" type="password" autocomplete="new-password"></label>'+
+        '<label>Enabled<select name="enabled"><option value="false">Off</option><option value="true">On</option></select></label>',
+        'Save connection')+
+      '<section><h2>Server configuration readiness</h2><p>Vault '+(data.configuration.vault?'configured':'missing')+
+      ' · Delivery '+(data.configuration.delivery?'enabled':'disabled')+
+      ' · Payment events '+(data.configuration.paymentEvents?'configured':'missing')+'</p></section></div>';
     return;
   }
   if (location.pathname === '/call') {
@@ -536,12 +570,22 @@ app.addEventListener('submit', async event => {
     } else if (form.id === 'sign-out') {
       await request('logout', {});
     } else {
-      for (const key of ['rate', 'minimum', 'duration', 'cents', 'price', 'cap', 'concurrency', 'budget', 'payout', 'floor', 'seconds', 'limit']) {
+      for (const key of ['rate', 'minimum', 'duration', 'cents', 'price', 'cap', 'concurrency', 'budget', 'payout', 'floor', 'seconds', 'limit','threshold','recharge','net','day','start','end','monthly','timeout']) {
         if (Object.hasOwn(data, key)) data[key] = Number(data[key]);
       }
       if (Object.hasOwn(data, 'enabled')) data.enabled = data.enabled === 'true';
       if (Object.hasOwn(data, 'paused')) data.paused = data.paused === 'true';
       const action = event.submitter?.dataset.operation || form.dataset.action;
+      if (action==='management/numbers') {
+        data.sites=new FormData(form).getAll('sites');
+        data.quarantined=data.quarantined==='true';
+      }
+      if (action === 'workspace-tools/lifecycle/retention') data.days=Number(data.days);
+      if (action.startsWith('workspace-tools/lifecycle/invoice-')) [data.kind,data.id]=data.selection.split(':');
+      if (action==='workspace-tools/policy/save') {
+        data.days=data.days.split(',').map(Number);
+        data.weights=JSON.parse(data.weights);
+      }
       if (action === 'leads/post') [data.lead, data.quote] = data.selection.split(':');
       if (action === 'routing') {
         data.routes = data.routes.split(/\r?\n/).filter(line => line.trim()).map(line => {
@@ -550,6 +594,7 @@ app.addEventListener('submit', async event => {
         });
       }
       if (action === 'routing/preview' || action === 'calls') data.failed = data.failed.split(/\s+/).filter(Boolean);
+      if ((action==='routing/preview' || action==='calls') && data.at) data.at=new Date(data.at).toISOString();
       if (action === 'routing/menu') {
         data.options = data.options.split(/\r?\n/).filter(line => line.trim()).map(line => {
           const [digit, label, destination] = line.split('|').map(value => value.trim());
@@ -557,6 +602,12 @@ app.addEventListener('submit', async event => {
         });
       }
       const result = await request(action === 'complete' ? 'calls/' + encodeURIComponent(data.id) + '/complete' : action, data);
+      if (action==='register') {status.textContent='Your account request is pending platform administrator approval.';return;}
+      if (action==='password-reset/request') {
+        status.textContent='If the account exists, a reset email has been queued.';
+        return;
+      }
+      if (action==='password-reset/redeem') { location.replace('/app'); return; }
       if (action === 'management/totp-setup') {
         status.textContent = 'Enter this key in your authenticator app: ' + result.secret +
           '. Then submit the six-digit code below to confirm.';

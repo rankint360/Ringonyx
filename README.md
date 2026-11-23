@@ -77,3 +77,50 @@ Run `node server.mjs --backup path/to/new-backup.sqlite` from the server directo
 3. Confirm `GET /health` returns `{"status":"ok"}` through the proxy. Open the homepage and `/app`, sign in, and verify the session cookie is Secure. With test data, simulate a call, complete it, check its invoice totals, and submit a form lead through its public intake link. Confirm that the intended renter or buyer sees the relevant records in their portal.
 4. Before an upgrade, save a snapshot to a fresh path. For a restore drill, copy the snapshot to a separate writable path, point a second server at the copy on another port, sign in, and verify site, call, and billing records. For rollback, stop the service and switch to the compatible source revision and verified snapshot before restarting. Keep the pre-rollback database for reconciliation of any writes made after the snapshot.
 5. After staging passes, verify the configured live providers with test accounts and test traffic before opening public access. Record the deployed revision, smoke-test results, and launch decision in the Record Register.
+
+## Application services added on 2026-11-23
+
+Open **Workspace tools** after signing in. Its tabs expose plan and wallet controls, invoice lifecycle, audio recordings, provider delivery, routing policies, and number management. Signup requests at `/register` enter the platform approval queue. Password recovery starts at `/reset`. Money values in the API are integer US cents.
+
+Managed plans are opt-in for existing workspaces. Draft Individual and Network prices follow the supplied screenshots. A trial lasts 14 days and can be started once per workspace. Paid activation requires a trusted settlement event. The service tracks renewal requests and cancellation boundaries. Limits affect new resources and preserve existing records. A wallet top-up request has no value until settled. Reservations, captures, releases, usage events, and receipts use stable references to prevent duplicate accounting.
+
+### Deferred provider contracts
+
+The app sends normalized Ringonyx event envelopes to configured HTTPS endpoints. Native adapters for carrier, payments, email, CRM, ads, AI, and other provider APIs remain separate integration work. A generic endpoint connection does not establish native OAuth or provider-specific field mapping.
+
+The durable outbox records attempts, applies exponential retry delays, and stops automatic retries after five failures. Owners can retry or cancel outstanding jobs. Workers send the job ID as an idempotency key, so the receiving adapter must deduplicate it. Dispatch stays disabled until `RINGONYX_DELIVERY_ENABLED=true`. The server allowlist `RINGONYX_DELIVERY_HOSTS` names exact endpoint hosts allowed for delivery. Credentials require `RINGONYX_VAULT_KEY`, a stable 64-character hexadecimal AES-256 key. Saved credentials are never returned. Preserve that key with encrypted database backups.
+
+A trusted adapter reports completion to `POST /webhooks/ringonyx/events`. The payment alias is `/webhooks/ringonyx/payment`. Use HMAC-SHA256 with `RINGONYX_PAYMENT_EVENT_SECRET` over the Unix timestamp, a period, and the exact raw JSON. Send the timestamp as `X-Ringonyx-Timestamp` and the hex signature as `X-Ringonyx-Signature`. Events older than five minutes are rejected.
+
+- Payment events contain `type: "payment"`, a unique receipt `id`, and the payment `request` ID.
+- Carrier events contain `type: "carrier"`, a carrier `request` ID, and `state: "complete"` or `"failed"`. Inventory results supply up to 100 `offers` with `number`, `location`, `monthly`, and `activation`. Purchase results supply `providerReference`. Callback results supply `seconds` and `cents`, capped by reserved cost.
+- Usage events contain `type: "usage"`, `account`, unique `reference`, `kind`, `units`, and `cents`. They can debit available wallet credit.
+
+These contracts require a trusted adapter. Individual providers use their own webhook formats and authentication.
+
+### Maintenance and media
+
+Run `node server.mjs --maintenance` with the same database and secrets as the app. It checks subscription renewals, runs scheduled invoices, removes expired audio, and dispatches eligible jobs if enabled. Configure the schedule during deployment setup. Billing schedules use UTC. Monthly rent runs bill the previous calendar month. Manual runs gather currently unbilled charges, and references prevent duplicate billing.
+
+Staff can upload audio up to 10 MB per recording. SQLite stores the audio. Scoped staff and renter endpoints provide playback. Retention supports 30, 90, 180, or 365 days and preserves deletion metadata. Carrier audio ingestion remains integration work.
+
+Reviewed spam, solicitor, and wrong-number classifications create a credit or remove an unbilled charge only when an owner enables billing automation. Paid or void invoices need manual reconciliation. Model inference remains AI integration work.
+
+The target editor supports dragging and keyboard buttons. Restoring a target or keypad-menu version creates another revision. Hours, ZIP coverage, round robin, weights, and ring-all groups execute in the simulator. Live carrier execution and browser WebRTC remain integration work.
+
+Visual comparison, native provider acceptance, and public launch testing remain pending.
+
+### Auctions and intelligence
+
+Workspace tools includes buyer auctions and conversation/caller-data controls. An auction records a deadline from 200 to 10,000 ms and queues requests for matching regional buyers. A signed event with `type: "bid"`, `request` (auction ID), `buyer`, and `cents` records one response per buyer. Late responses remain visible and cannot win. Awarding rechecks current eligibility and reserves capacity and budgets using the winning bid. Settlement uses that saved bid.
+
+The trusted adapter event `type: "intelligence"` uses a request ID and a terminal `state` of `complete` or `failed`. Result fields depend on the original request.
+
+- Transcription returns `transcript`, up to 6,000 characters.
+- Analysis returns `summary`, `intent`, score from 0 to 100, sentiment (`positive`, `neutral`, `negative`, or `unknown`), urgency (`low`, `normal`, or `high`), and optional `coaching`. An optional classification can be `qualified`, `spam`, `wrong-number`, or `solicitor`. Billing adjustments still require the owner's automation setting.
+- Booking verification returns a boolean `confirmed` and, when confirmed, `evidence`. The charge and booking reference come from the original application request.
+- Caller data can include `name`, `lineType`, `carrier`, `city`, `region`, `country`, `source`, and a textual `profile`.
+
+Request IDs bind results to the original workspace and call. Replaying a completed result does not duplicate a charge or booking. Results appear in Workspace tools and preserve separate human-review records.
+
+An optional long-running processor is available as `node server.mjs --worker`. It needs access to the same persistent database and environment as the web server. It expires auctions, runs maintenance, and dispatches allowed jobs. Native low-latency buyer adapters are still required for real-time bidding. Configure process supervision and scheduling during the integration/deployment stage.

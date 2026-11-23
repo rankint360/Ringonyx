@@ -95,6 +95,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       LEFT JOIN network_invoice_disputes d ON d.invoice=i.id
       WHERE b.${column}=? GROUP BY i.id ORDER BY i.created DESC, i.id`, value).map(invoice => ({
       ...invoice,
+      ...query("SELECT due,voided,reason AS void_reason FROM invoice_lifecycle WHERE kind='buyer' AND invoice=?",invoice.id)[0],
       entries: query('SELECT reference, kind, cents, created FROM network_invoice_entries WHERE invoice=? ORDER BY created, reference', invoice.id),
       lines: query(`SELECT c.reference, l.cents FROM network_invoice_lines l
         JOIN network_calls c ON c.id=l.call WHERE l.invoice=? ORDER BY c.created, c.id`, invoice.id)
@@ -240,7 +241,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       });
     }
   };
-  function match(account, data, commit) {
+  function match(account, data, commit, bidOverrides = null) {
     const code = region(data.region);
     const offerId = required(data.offer, 'publisher offer');
     const floor = whole(data.floor ?? 0, 1000000);
@@ -265,18 +266,23 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       EXISTS(SELECT 1 FROM network_pauses p WHERE p.account=b.account AND p.kind='buyer' AND p.party=b.id) AS paused,
       (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.outcome IN ('pending','answered','missed')) AS samples,
       ${prepaidTotals},
-      (SELECT COALESCE(SUM(CASE WHEN c.outcome='pending' THEN b.price ELSE c.revenue END), 0)
-        FROM network_calls c WHERE c.buyer=b.id AND c.created>=?) AS committed,
+      (SELECT COALESCE(SUM(CASE WHEN c.outcome='pending' THEN COALESCE(d.bid,b.price) ELSE c.revenue END), 0)
+        FROM network_calls c LEFT JOIN network_decisions d ON d.call=c.id WHERE c.buyer=b.id AND c.created>=?) AS committed,
       (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.created>=?) AS daily,
       (SELECT COUNT(*) FROM network_calls c WHERE c.buyer=b.id AND c.outcome='pending') AS active,
       (SELECT AVG(c.revenue) FROM network_calls c WHERE c.buyer=b.id AND c.outcome IN ('answered','missed')) AS yield
       FROM buyers b LEFT JOIN network_buyer_budgets limits ON limits.buyer=b.id
       WHERE b.account=? ORDER BY b.id`, timestamp.slice(0,10), timestamp.slice(0,10), account);
+    if (bidOverrides) for (const candidate of candidates) {
+      candidate.contractPrice=candidate.price;
+      candidate.price=bidOverrides.get(candidate.id) ?? 0;
+    }
     const excluded = buyer => {
       if (paused) return 'Publisher offer paused';
       if (suppressed) return 'Region suppressed';
       if (buyer.region !== code) return 'Outside buyer coverage';
       if (buyer.paused) return 'Buyer paused';
+      if (bidOverrides && !bidOverrides.has(buyer.id)) return 'No timely bid';
       if (buyer.price < Math.max(floor, offer.payout)) return 'Below effective bid floor';
       if (buyer.daily >= buyer.cap) return 'Daily call cap reached';
       if (buyer.active >= buyer.concurrency) return 'Concurrent call cap reached';
@@ -292,7 +298,8 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
       || b.price - a.price || a.id.localeCompare(b.id));
     const buyer = eligible[0];
     const outcome = buyer ? 'pending' : suppressed || paused ? 'suppressed' : 'unmatched';
-    const qualified = candidates.filter(b => b.region === code && !b.paused && b.price >= Math.max(floor, offer.payout));
+    const qualified = candidates.filter(b => b.region === code && !b.paused &&
+      (!bidOverrides || bidOverrides.has(b.id)) && b.price >= Math.max(floor, offer.payout));
     const reason = buyer ? 'Matched' : paused ? 'Publisher offer paused' : suppressed ? 'Region suppressed'
       : qualified.length && qualified.every(candidate => excluded(candidate) === 'Daily budget reached')
         ? 'Buyer budget reached' : qualified.length && qualified.every(candidate => excluded(candidate) === 'Prepaid balance reached')
@@ -304,6 +311,7 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     run('INSERT INTO network_decisions VALUES (?, ?, ?, ?, ?, ?)', id, strategy, floor, buyer?.price ?? null, outcome, reason);
     const evidence = candidates.map(candidate => ({
       name: candidate.name, bid: candidate.price,
+      ...(bidOverrides ? {contractPrice:candidate.contractPrice}:{}),
       samples: candidate.samples, exploration: exploring(candidate), rank: eligible.includes(candidate) ? eligible.indexOf(candidate) + 1 : null,
       expectedRevenue: strategy === 'predictive' ? Math.round(candidate.yield ?? candidate.price) : null,
       decision: candidate === buyer ? 'Selected' : excluded(candidate) ?? 'Ranked below winner'
@@ -312,6 +320,9 @@ export function network(db, { query, run, transaction, fail, required, whole, ph
     return { id, outcome, buyer: buyer?.id ?? null };
   }
   return {
+    award(account,data,bids) {
+      return transaction(()=>match(account,data,true,bids));
+    },
     buyerDispute(token, data) {
       const invoice = required(data.invoice, 'invoice');
       const [buyer] = query(`SELECT b.account FROM buyers b JOIN network_invoices i ON i.buyer=b.id

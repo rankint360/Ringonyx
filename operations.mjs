@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const resources = ['sites', 'campaigns'];
-export function operations(db, { query, run, transaction, required, fail, now, readSites, campaigns, addSite }) {
+export function operations(db, { query, run, transaction, required, fail, now, readSites, campaigns, addSite, onAudit = () => {} }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS developer_keys (
       id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES accounts(id), digest TEXT UNIQUE NOT NULL,
@@ -24,8 +24,11 @@ export function operations(db, { query, run, transaction, required, fail, now, r
   }
   return {
     audit(user, operation) {
-      run('INSERT INTO workspace_audit VALUES (?, ?, ?, ?, ?)', randomUUID(), user.account,
-        user.email ?? 'local operator', operation, now());
+      const id=randomUUID();
+      const created=now();
+      run('INSERT INTO workspace_audit VALUES (?, ?, ?, ?, ?)', id, user.account,
+        user.email ?? 'local operator', operation, created);
+      onAudit(user.account,{id,type:'ringonyx.operation',actor:user.email ?? 'local operator',operation,created});
     },
     brand(account) {
       return query('SELECT name, accent FROM workspace_brand WHERE account=?', account)[0] ?? null;

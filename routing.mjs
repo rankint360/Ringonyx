@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 export function routing(db, { query, run, transaction, required, phone, fail }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS site_routes (
@@ -16,6 +17,10 @@ export function routing(db, { query, run, transaction, required, phone, fail }) 
       call TEXT PRIMARY KEY REFERENCES calls(id), destination TEXT,
       menu_status TEXT NOT NULL, steps TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS routing_revisions (
+      id TEXT PRIMARY KEY, site TEXT NOT NULL REFERENCES sites(id), kind TEXT NOT NULL,
+      payload TEXT NOT NULL, created TEXT NOT NULL
+    );
   `);
   function check(account, site) {
     if (!query('SELECT id FROM sites WHERE id=? AND account=?', site, account).length) fail('Unknown site.', 404);
@@ -24,6 +29,17 @@ export function routing(db, { query, run, transaction, required, phone, fail }) 
     return query('SELECT position, label, destination FROM site_routes WHERE site=? ORDER BY position', site);
   }
   return {
+    revisions(account) {
+      return query(`SELECT r.id,r.site,r.kind,r.created FROM routing_revisions r JOIN sites s ON s.id=r.site
+        WHERE s.account=? ORDER BY r.created DESC LIMIT 100`,account);
+    },
+    restore(account,id) {
+      const [row]=query(`SELECT r.* FROM routing_revisions r JOIN sites s ON s.id=r.site
+        WHERE r.id=? AND s.account=?`,id,account);
+      if (!row) fail('Unknown routing version.',404);
+      const payload=JSON.parse(row.payload);
+      return row.kind==='targets' ? this.save(account,row.site,payload) : this.saveMenu(account,row.site,payload);
+    },
     snapshot(call, preview) {
       run('INSERT INTO simulated_routes VALUES (?, ?, ?, ?)', call,
         preview.next?.destination ?? null, preview.menuStatus, JSON.stringify(preview.steps));
@@ -52,6 +68,9 @@ export function routing(db, { query, run, transaction, required, phone, fail }) 
         run('INSERT INTO site_menus VALUES (?, ?) ON CONFLICT(site) DO UPDATE SET prompt=excluded.prompt', site, prompt);
         run('DELETE FROM site_menu_options WHERE site=?', site);
         for (const option of options) run('INSERT INTO site_menu_options VALUES (?, ?, ?, ?)', site, ...option);
+        run('INSERT INTO routing_revisions VALUES (?,?,?,?,?)',randomUUID(),site,'menu',JSON.stringify({
+          prompt,options:options.map(([digit,label,destination])=>({digit,label,destination}))
+        }),new Date().toISOString());
       });
       return { site, prompt };
     },
@@ -70,6 +89,9 @@ export function routing(db, { query, run, transaction, required, phone, fail }) 
       transaction(() => {
         run('DELETE FROM site_routes WHERE site=?', site);
         for (const row of rows) run('INSERT INTO site_routes VALUES (?, ?, ?, ?)', site, ...row);
+        run('INSERT INTO routing_revisions VALUES (?,?,?,?,?)',randomUUID(),site,'targets',JSON.stringify(
+          rows.map(([,label,destination])=>({label,destination}))
+        ),new Date().toISOString());
       });
       return destinations(site);
     },

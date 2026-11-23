@@ -1,5 +1,14 @@
 import { accountAccess, initializeAccounts, provision } from './accounts.mjs';
 import { management } from './management.mjs';
+import { commerce } from './commerce.mjs';
+import { delivery } from './delivery.mjs';
+import { lifecycle } from './lifecycle.mjs';
+import { routingPolicies } from './routing-policy.mjs';
+import { recovery } from './recovery.mjs';
+import { registration } from './registration.mjs';
+import { numberWorkflows } from './number-workflows.mjs';
+import { intelligence } from './intelligence.mjs';
+import { auctions } from './auctions.mjs';
 import { billing, initializeBilling } from './billing.mjs';
 import { network } from './network.mjs';
 import { webLeads } from './leads.mjs';
@@ -11,9 +20,10 @@ import { communications } from './communications.mjs';
 import { enableNumber, initializeVoice, voiceHandler } from './voice.mjs';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
+import { setTimeout as pause } from 'node:timers/promises';
 
 const path = process.env.RINGONYX_DB || 'data/ringonyx.sqlite';
 if (process.argv[2] === '--backup') {
@@ -37,6 +47,8 @@ if (process.argv[2] === '--backup') {
 if (!process.env.RINGONYX_DB) mkdirSync('data', { recursive: true });
 const db = new DatabaseSync(path);
 db.exec(`
+  PRAGMA busy_timeout = 5000;
+  PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
   CREATE TABLE IF NOT EXISTS sites (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, number TEXT UNIQUE NOT NULL
@@ -58,6 +70,9 @@ db.exec(`
     call TEXT PRIMARY KEY REFERENCES calls(id), cents INTEGER NOT NULL
   );
     CREATE TABLE IF NOT EXISTS call_completion_times (call TEXT PRIMARY KEY REFERENCES calls(id), created TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS call_context (
+      call TEXT PRIMARY KEY REFERENCES calls(id), caller TEXT NOT NULL, zip TEXT NOT NULL
+    );
 `);
 initializeAccounts(db);
 initializeBilling(db);
@@ -79,7 +94,7 @@ const production = process.env.NODE_ENV === 'production';
 const access = accountAccess(db, { secure: production });
 const adminEmail = process.env.RINGONYX_ADMIN_EMAIL?.trim().toLowerCase();
 const adminHost = process.env.RINGONYX_ADMIN_HOST?.trim().toLowerCase();
-const adminPaths = new Set(['/admin', '/api/admin', '/api/session', '/api/login', '/api/logout', '/app.js', '/console.js', '/manage.js', '/dates.js', '/console.css',
+const adminPaths = new Set(['/admin', '/api/admin', '/api/session', '/api/login', '/api/logout', '/app.js', '/console.js', '/manage.js', '/tools.js', '/dates.js', '/console.css',
   '/style.css', '/brand.css', '/ringonyx-mark.svg', '/brand/favicons/favicon-32.png', '/brand/favicons/favicon-180.png']);
 const isAdmin = user => Boolean(adminEmail && user?.email === adminEmail && user.role === 'owner' && !user.renter);
 db.exec(`
@@ -98,25 +113,34 @@ const routes = {
     COALESCE(ch.cents, 0) AS cents, a.minimum AS qualification_minimum, a.rate AS agreed_rate,
     il.invoice, cc.sid IS NOT NULL AS carrier, ca.campaign, ca.number AS tracking_number,
     sr.destination AS simulated_destination, sr.menu_status AS simulated_menu_status, sr.steps AS routing_steps,
+    cx.caller AS caller_number,cx.zip AS caller_zip,
     rd.disclosure AS simulated_disclosure, rd.decision AS simulated_recording_decision
     FROM calls c JOIN sites s ON s.id=c.site
     LEFT JOIN assignments a ON a.id=c.assignment LEFT JOIN renters r ON r.id=a.renter
     LEFT JOIN charges ch ON ch.call=c.id LEFT JOIN invoice_lines il ON il.call=c.id
     LEFT JOIN carrier_calls cc ON cc.call=c.id
     LEFT JOIN call_attribution ca ON ca.call=c.id LEFT JOIN simulated_routes sr ON sr.call=c.id
+    LEFT JOIN call_context cx ON cx.call=c.id
     LEFT JOIN simulated_recording_decisions rd ON rd.call=c.id`
 };
 const query = (sql, ...args) => db.prepare(sql).all(...args);
 const run = (sql, ...args) => db.prepare(sql).run(...args);
+let transactionDepth = 0;
 function transaction(action) {
-  db.exec('BEGIN IMMEDIATE');
+  const nested=transactionDepth>0;
+  const savepoint='ringonyx_'+transactionDepth;
+  db.exec(nested ? 'SAVEPOINT '+savepoint : 'BEGIN IMMEDIATE');
+  transactionDepth++;
   try {
     const result = action();
-    db.exec('COMMIT');
+    db.exec(nested ? 'RELEASE SAVEPOINT '+savepoint : 'COMMIT');
     return result;
   } catch (error) {
-    db.exec('ROLLBACK');
+    db.exec(nested ? 'ROLLBACK TO SAVEPOINT '+savepoint : 'ROLLBACK');
+    if (nested) db.exec('RELEASE SAVEPOINT '+savepoint);
     throw error;
+  } finally {
+    transactionDepth--;
   }
 }
 function fail(message, status = 400) {
@@ -160,6 +184,7 @@ async function body(req) {
   return data;
 }
 function addSite(account, data) {
+  shop.check(account, 'sites');
   const number = phone(data.number);
   const name = required(data.name, 'site name');
   if (query('SELECT id FROM sites WHERE number=?', number).length || tracking.contains(number)) fail('Number already assigned', 409);
@@ -171,6 +196,7 @@ function write(entity, data, account) {
   const id = randomUUID();
   if (entity === 'sites') return transaction(() => addSite(account, data));
   if (entity === 'renters') {
+    shop.check(account, 'partners');
     run('INSERT INTO renters (id, name, destination, portal, account) VALUES (?, ?, ?, ?, ?)', id, required(data.name, 'renter name'), phone(data.destination), randomUUID(), account);
     return { id };
   }
@@ -208,7 +234,12 @@ function write(entity, data, account) {
   fail('Unknown endpoint', 404);
 }
 function simulate(site, source, account, data) {
-  const decision = routingPlans.preview(account, site.id, data.failed ?? [], data.digit, data.scenario, data.caller);
+  if (query('SELECT site FROM number_management WHERE site=? AND quarantined=1',site.id).length) {
+    fail('This tracking number is quarantined.',409);
+  }
+  const preview = routingPlans.preview(account, site.id, data.failed ?? [], data.digit, data.scenario, data.caller);
+  const decision = preview.menuStatus === 'blocked-caller' || preview.menuStatus === 'invalid-digit'
+    ? preview : { ...preview, ...policies.apply(account, site.id, preview.steps, data) };
   const destination = decision.next?.destination ?? null;
   const [assignment] = destination ? query(`SELECT a.id FROM assignments a JOIN renters r ON r.id=a.renter
     WHERE a.site=? AND a.ended IS NULL AND r.destination=?`, site.id, destination) : [];
@@ -216,10 +247,16 @@ function simulate(site, source, account, data) {
   run('INSERT INTO calls VALUES (?, ?, ?, ?, ?, NULL, ?)', id, site.id, assignment?.id ?? null,
     source, now(), destination ? 'pending' : 'unrouted');
   routingPlans.snapshot(id, decision);
+  run('INSERT INTO call_context VALUES (?,?,?)',id,data.caller ? phone(data.caller):'',typeof data.zip==='string'?data.zip:'');
   const recording = comms.simulateRecording(id, site.id, destination, data.recordingConsent);
   return { id, destination, recording };
 }
-function arrive(site, source, live = false) {
+function arrive(site, source, live = false, context = {}) {
+  if (query('SELECT site FROM number_management WHERE site=? AND quarantined=1',site.id).length) {
+    const id=randomUUID();
+    run('INSERT INTO calls VALUES (?,?,NULL,?,?,NULL,?)',id,site.id,source,now(),'unrouted');
+    return {id,destination:null};
+  }
   const [assignment] = query(`SELECT a.id, r.destination FROM assignments a
     JOIN renters r ON r.id=a.renter WHERE a.site=? AND a.ended IS NULL
     AND (?=0 OR NOT EXISTS (
@@ -228,6 +265,8 @@ function arrive(site, source, live = false) {
   const id = randomUUID();
   run('INSERT INTO calls VALUES (?, ?, ?, ?, ?, NULL, ?)', id, site.id,
     assignment?.id ?? null, source, now(), assignment ? 'pending' : 'unrouted');
+  const caller=typeof context.caller==='string' && /^\+[1-9]\d{7,14}$/.test(context.caller) ? context.caller:'';
+  run('INSERT INTO call_context VALUES (?,?,?)',id,caller,'');
   return { id, destination: assignment?.destination ?? null };
 }
 function complete(id, data, account) {
@@ -243,6 +282,7 @@ function complete(id, data, account) {
   run('UPDATE calls SET outcome=?, duration=? WHERE id=?', data.outcome, duration, id);
   run('INSERT INTO call_completion_times VALUES (?, ?)', id, now());
   if (cents) run('INSERT INTO charges VALUES (?, ?)', id, cents);
+  queueEvent(account,{id:'call-completed:'+id,type:'call.completed',call:{id,outcome:data.outcome,duration,cents,source:call.source}});
   return { cents };
 }
 const handleVoice = voiceHandler({
@@ -251,16 +291,77 @@ const handleVoice = voiceHandler({
 });
 const invoices = billing({ query, run, transaction, id: randomUUID, now, fail });
 const exchange = network(db, { query, run, transaction, fail, required, whole, phone, now });
-const leads = webLeads(db, { query, run, transaction, required, phone, whole, fail, now });
+function queueEvent(account,event) {
+  const targets=event.type==='lead.delivered' ? ['webhook','lead-delivery','hubspot','salesforce','slack'] :
+    event.type==='lead.captured' ? ['webhook','hubspot','salesforce'] : ['webhook','google-ads','meta','hubspot','salesforce','slack'];
+  for (const connection of query('SELECT provider FROM integration_connections WHERE account=? AND enabled=1',account)) {
+    if (targets.includes(connection.provider)) deliveries.enqueue(account,connection.provider,event.id,event);
+  }
+}
+const leads = webLeads(db, { query, run, transaction, required, phone, whole, fail, now,onEvent:queueEvent });
 const routingPlans = routing(db, { query, run, transaction, required, phone, fail });
 const tracking = attribution(db, { query, run, transaction, fail, phone });
 const comms = communications(db, { query, run, fail, required, phone, now });
 const insights = analytics(db, { query, run, required, fail, now });
 const ops = operations(db, { query, run, transaction, required, fail, now, addSite,
+  onAudit: (account,event) => {
+    if (query("SELECT provider FROM integration_connections WHERE account=? AND provider='webhook' AND enabled=1",account).length) {
+      deliveries.enqueue(account,'webhook',event.id,event);
+    }
+  },
   readSites: account => query(routes.sites, account),
   campaigns: account => insights.report(account).campaigns });
 const manager = management(db, { query, run, transaction, required, fail, now });
+const shop = commerce(db, { query, run, transaction, required, whole, fail, now });
+const deliveries = delivery(db, { query, run, transaction, required, fail, now });
+const resets = recovery(db, { query, run, transaction, required, fail, now, deliveries });
+const signup = registration(db, {query,run,transaction,required,fail,now,deliveries});
+const policies = routingPolicies(db, { query, run, required, whole, fail });
+const life = lifecycle(db, { query, run, transaction, required, whole, fail, now, invoices, exchange, deliveries });
+const numbers = numberWorkflows(db,{query,run,transaction,required,whole,fail,now,shop,deliveries,addSite,
+  enable:(site,source)=>enableNumber(db,site,source)});
+const intelligenceJobs=intelligence(db,{query,run,transaction,required,whole,fail,now,deliveries,shop,invoices,life});
+const bidAuctions=auctions(db,{query,run,transaction,required,whole,fail,now,deliveries,exchange});
+if (process.argv[2] === '--maintenance') {
+  for (const account of query('SELECT id FROM accounts')) {
+    shop.renew(account.id);
+    bidAuctions.expire(account.id);
+    life.run(account.id);
+  }
+  console.log(JSON.stringify(await deliveries.dispatch()));
+  db.close();
+  process.exit(0);
+}
+if (process.argv[2] === '--worker') {
+  let running=true,lastMaintenance=0;
+  process.on('SIGTERM',()=>{running=false;});
+  process.on('SIGINT',()=>{running=false;});
+  console.log('Ringonyx job worker ready.');
+  while (running) {
+    const accounts=query('SELECT id FROM accounts');
+    for (const account of accounts) bidAuctions.expire(account.id);
+    if (Date.now()-lastMaintenance>=60000) {
+      for (const account of accounts) {
+        try {
+          shop.renew(account.id);
+          life.run(account.id);
+        } catch(error) {
+          console.error('Workspace maintenance failed:',account.id,error.message);
+        }
+      }
+      lastMaintenance=Date.now();
+    }
+    try { await deliveries.dispatch(); } catch(error) {console.error('Delivery worker failed:',error.message);}
+    await pause(100);
+  }
+  db.close();
+  process.exit(0);
+}
 const assets = {
+  '/workspace-tools': ['index.html', 'text/html'],
+  '/reset': ['index.html', 'text/html'],
+  '/register': ['index.html', 'text/html'],
+  '/tools.js': ['tools.js', 'text/javascript'],
   '/settings': ['index.html', 'text/html'],
   '/websites': ['index.html', 'text/html'],
   '/renters': ['index.html', 'text/html'],
@@ -321,6 +422,27 @@ const server = createServer(async (req, res) => {
       res.writeHead(302, { Location: '/admin' });
       return res.end();
     }
+    if (req.method === 'POST' && ['/webhooks/ringonyx/payment','/webhooks/ringonyx/events'].includes(pathname)) {
+      const secret = process.env.RINGONYX_PAYMENT_EVENT_SECRET;
+      if (!secret) fail('Payment events are not configured.',503);
+      const timestamp = req.headers['x-ringonyx-timestamp'];
+      if (!/^\d{10}$/.test(timestamp || '') || Math.abs(Date.now()/1000-Number(timestamp))>300) fail('Expired payment event.',403);
+      const raw = await readBody(req);
+      const expected = createHmac('sha256',secret).update(timestamp+'.'+raw).digest('hex');
+      const signature = String(req.headers['x-ringonyx-signature'] || '');
+      if (!/^[a-f0-9]{64}$/i.test(signature) || !timingSafeEqual(Buffer.from(expected),Buffer.from(signature.toLowerCase()))) fail('Invalid payment signature.',403);
+      let event;
+      try { event=JSON.parse(raw); } catch { fail('Invalid payment event.'); }
+      if (event.type==='carrier') return json(numbers.event(event));
+      if (event.type==='intelligence') return json(intelligenceJobs.event(event));
+      if (event.type==='bid') return json(bidAuctions.event(event));
+      if (event.type==='usage') {
+        if (!query('SELECT id FROM accounts WHERE id=?',event.account).length) fail('Unknown workspace.',404);
+        return json(shop.recordUsage(event.account,event));
+      }
+      if (event.type && event.type!=='payment') fail('Unknown provider event type.');
+      return json(shop.settle(required(event.id,'event ID'),required(event.request,'payment request')));
+    }
     if (req.method === 'GET' && pathname === '/health') {
       query('SELECT 1');
       return json({ status: 'ok' });
@@ -347,7 +469,19 @@ const server = createServer(async (req, res) => {
       return res.end(readFileSync(new URL('./public/' + file, import.meta.url)));
     }
     const portal = /^\/api\/portal\/([\w-]+)$/.exec(pathname);
+    const portalAudio=/^\/api\/portal-audio\/([\w-]+)\/([\w-]+)$/.exec(pathname);
+    const renterAudio=/^\/api\/renter-audio\/([\w-]+)$/.exec(pathname);
+    if (req.method==='GET' && (portalAudio || renterAudio)) {
+      const renter=portalAudio ? query('SELECT id FROM renters WHERE portal=?',portalAudio[1])[0]?.id : access.session(req)?.renter;
+      if (!renter) fail('Renter access required.',401);
+      const row=life.renterRecording(renter,portalAudio ? portalAudio[2]:renterAudio[1]);
+      res.writeHead(200,{'Content-Type':row.mime,'Content-Length':row.bytes.length});
+      return res.end(Buffer.from(row.bytes));
+    }
     if (req.method === 'POST' && pathname === '/api/team-accept') return json(manager.accept(await body(req)));
+    if (req.method === 'POST' && pathname === '/api/register') return json(signup.request(await body(req),req.socket.remoteAddress),202);
+    if (req.method === 'POST' && pathname === '/api/password-reset/request') return json(resets.request((await body(req)).email,req.socket.remoteAddress));
+    if (req.method === 'POST' && pathname === '/api/password-reset/redeem') return json(resets.redeem(await body(req)));
     if (req.method === 'POST' && pathname === '/api/renter-accept') {
       const data = await body(req);
       return json(access.accept(required(data.invite, 'invitation'), data.password, fail));
@@ -380,7 +514,7 @@ const server = createServer(async (req, res) => {
       if (!renter) fail('Portal link not found', 404);
       const calls = query(routes.calls + ' WHERE a.renter=? AND s.account=? ORDER BY c.created DESC', renter.id, renter.account);
       for (const call of calls) delete call.routing_steps;
-      return json({ renter: renter.name, brand: ops.brand(renter.account), invoices: invoices.forRenter(renter.id), calls });
+      return json({ renter: renter.name, brand: ops.brand(renter.account), invoices: invoices.forRenter(renter.id), calls, recordings:life.forRenter(renter.id) });
     }
     if (req.method === 'POST' && pathname === '/api/login') {
       return json(access.login(req, res, await body(req), fail, adminOrigin ? isAdmin : undefined));
@@ -395,6 +529,13 @@ const server = createServer(async (req, res) => {
     if (pathname === '/api/admin') {
       if (!isAdmin(user)) fail('Platform administrator access required.', 403);
       if (req.method === 'GET') return json({
+        providers:deliveries.providers,
+        connections:query('SELECT account,provider,endpoint,enabled,secret IS NOT NULL AS hasSecret,updated FROM integration_connections ORDER BY account,provider'),
+        configuration:{
+          vault:Boolean(process.env.RINGONYX_VAULT_KEY),
+          delivery:process.env.RINGONYX_DELIVERY_ENABLED==='true',
+          paymentEvents:Boolean(process.env.RINGONYX_PAYMENT_EVENT_SECRET)
+        },
         accounts: query(`SELECT a.id, a.name, COALESCE(r.state,'approved') AS state
           FROM accounts a LEFT JOIN platform_review r ON r.account=a.id ORDER BY a.name`),
         users: query(`SELECT u.id, u.email, u.role, a.name AS workspace, d.user IS NOT NULL AS disabled
@@ -407,12 +548,21 @@ const server = createServer(async (req, res) => {
       if (req.method !== 'POST') fail('Method not allowed.', 405);
       const data = await body(req);
       return json(transaction(() => {
-        if (data.action === 'workspace') {
+        if (data.action === 'integration') {
+          const account=required(data.account,'workspace');
+          if (!query('SELECT id FROM accounts WHERE id=?',account).length) fail('Unknown workspace.',404);
+          deliveries.write({...user,account},'connection',data);
+        } else if (data.action === 'workspace') {
           const id = required(data.id, 'workspace');
           if (id === user.account) fail('Your admin workspace cannot be restricted.');
           if (!['approved', 'pending', 'suspended'].includes(data.state)) fail('Unknown approval state.');
           if (!query('SELECT id FROM accounts WHERE id=?', id).length) fail('Unknown workspace.', 404);
           run('INSERT INTO platform_review VALUES (?, ?) ON CONFLICT(account) DO UPDATE SET state=excluded.state', id, data.state);
+          if (data.state==='approved') {
+            for (const member of query("SELECT email FROM users WHERE account=? AND role='owner'",id)) {
+              deliveries.enqueue(id,'email','approval:'+id+':'+member.email,{type:'account-approved',recipient:member.email});
+            }
+          }
           if (data.state !== 'approved') run('DELETE FROM sessions WHERE user IN (SELECT id FROM users WHERE account=?)', id);
         } else if (data.action === 'user') {
           const id = required(data.id, 'user');
@@ -443,6 +593,63 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && user.role === 'viewer') fail('This account has read-only access.', 403);
     if (user.renter) fail('Use your renter portal.', 403);
+    if (req.method === 'GET' && pathname === '/api/workspace-tools') {
+      return json({ commerce:shop.read(user.account), delivery:deliveries.read(user.account),
+        lifecycle:life.read(user.account), policies:policies.list(user.account),
+        revisions:routingPlans.revisions(user.account),numbers:numbers.read(user.account),intelligence:intelligenceJobs.read(user.account),
+        auctions:bidAuctions.read(user.account) });
+    }
+    if (req.method === 'POST' && pathname.startsWith('/api/workspace-tools/')) {
+      res.once('finish',()=>{ if(res.statusCode<300) {
+        try { ops.audit(user,pathname); } catch(error) { console.error('Audit record failed:',error.message); }
+      }});
+      const action=pathname.slice('/api/workspace-tools/'.length);
+      const data=await body(req);
+      const [group, operation]=action.split('/');
+      if (group==='commerce') return json(shop.write(user,operation,data));
+      if (group==='delivery') return json(deliveries.write(user,operation,data));
+      if (group==='lifecycle') return json(life.write(user,operation,data));
+      if (group==='numbers') return json(numbers.write(user,operation,data));
+      if (group==='intelligence' && operation==='request') return json(intelligenceJobs.request(user,data));
+      if (group==='auction' && operation==='open') return json(bidAuctions.open(user,data));
+      if (group==='policy') {
+        if (user.role==='viewer') fail('Read-only account.',403);
+        return json(policies.save(user.account,data));
+      }
+      if (group==='flow' && operation==='restore') {
+        if (user.role==='viewer') fail('Read-only account.',403);
+        return json(routingPlans.restore(user.account,required(data.id,'version')));
+      }
+      fail('Unknown workspace tool.',404);
+    }
+    const recording=/^\/api\/recordings\/([\w-]+)$/.exec(pathname);
+    if (req.method==='GET' && recording) {
+      const row=life.recording(user.account,recording[1]);
+      const bytes=Buffer.from(row.bytes);
+      let start=0,end=bytes.length-1,code=200;
+      if (req.headers.range) {
+        const range=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range);
+        if (!range) { res.writeHead(416,{'Content-Range':'bytes */'+bytes.length}); return res.end(); }
+        start=Number(range[1]); end=range[2] ? Math.min(Number(range[2]),end):end;
+        if (start>end || start>=bytes.length) { res.writeHead(416,{'Content-Range':'bytes */'+bytes.length}); return res.end(); }
+        code=206;
+        res.setHeader('Content-Range','bytes '+start+'-'+end+'/'+bytes.length);
+      }
+      res.writeHead(code,{'Content-Type':row.mime,'Accept-Ranges':'bytes','Content-Length':end-start+1});
+      return res.end(bytes.subarray(start,end+1));
+    }
+    const upload=/^\/api\/recordings\/call\/([\w-]+)$/.exec(pathname);
+    if (req.method==='PUT' && upload) {
+      if (!['owner','operator'].includes(user.role)) fail('Read-only account.',403);
+      let size=0;
+      const chunks=[];
+      for await (const chunk of req.iterator({destroyOnReturn:false})) {
+        size+=chunk.length;
+        if (size>10*1024*1024) { req.resume(); fail('Maximum recording size is 10 MB.',413); }
+        chunks.push(chunk);
+      }
+      return json(life.upload(user.account,upload[1],String(req.headers['content-type']||'').split(';')[0],Buffer.concat(chunks)),201);
+    }
     if (req.method === 'GET' && pathname === '/api/call-detail') {
       const id = required(new URL(req.url, 'http://localhost').searchParams.get('id'), 'call');
       const [call] = query(routes.calls + ' WHERE s.account=? AND c.id=?', user.account, id);
@@ -514,7 +721,12 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && pathname.startsWith('/api/analytics/')) {
       const data = await body(req);
-      if (pathname.endsWith('/analyze')) return json(insights.analyze(user.account, data));
+      if (pathname.endsWith('/analyze')) {
+        shop.check(user.account,'ai');
+        const result=insights.analyze(user.account,data);
+        shop.recordUsage(user.account,{reference:'analysis:'+randomUUID(),kind:'analysis',units:1,cents:0});
+        return json(result);
+      }
       if (pathname.endsWith('/review')) return json(insights.saveReview(user.account, user.email ?? 'local operator', data));
       if (pathname.endsWith('/profile')) return json(insights.profile(user.account, data));
       if (pathname.endsWith('/simulate')) return json(insights.simulate(user.account, data));
@@ -557,12 +769,19 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && ['/api/routing', '/api/routing/preview'].includes(pathname)) {
       const data = await body(req);
       const site = required(data.site, 'site');
-      return json(pathname.endsWith('/preview') ? routingPlans.preview(user.account, site, data.failed ?? [], data.digit, data.scenario, data.caller)
-        : routingPlans.save(user.account, site, data.routes));
+      if (!pathname.endsWith('/preview')) return json(routingPlans.save(user.account,site,data.routes));
+      const preview=routingPlans.preview(user.account,site,data.failed??[],data.digit,data.scenario,data.caller);
+      return json(['blocked-caller','invalid-digit'].includes(preview.menuStatus) ? preview :
+        {...preview,...policies.apply(user.account,site,preview.steps,data)});
     }
     if (req.method === 'GET' && pathname === '/api/network') return json(exchange.list(user.account, user.role));
     if (req.method === 'POST' && pathname.startsWith('/api/network/')) {
-      return json(exchange.write(user.account, pathname.slice('/api/network/'.length), await body(req)));
+      const action=pathname.slice('/api/network/'.length);
+      const data=await body(req);
+      if (action==='buyers') shop.check(user.account,'partners');
+      if (action==='publishers') shop.check(user.account,'publishers');
+      if (action==='invoice-entry') life.guard(user.account,'buyer',data.invoice);
+      return json(exchange.write(user.account,action,data));
     }
     if (pathname === '/api/rental-rates' && req.method === 'POST') {
       const data = await body(req);
@@ -571,6 +790,7 @@ const server = createServer(async (req, res) => {
     }
     if (pathname === '/api/invoice-entries' && req.method === 'POST') {
       const data = await body(req);
+      life.guard(user.account,'renter',data.invoice);
       const cents = whole(data.cents, 1_000_000_000);
       if (!cents || !['payment', 'credit'].includes(data.kind)) fail('Choose a payment or credit and enter a positive amount.');
       const reference = required(data.reference, 'reference');

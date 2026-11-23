@@ -96,4 +96,8 @@
 
 | 2026-11-23 | Screenshot follow-up | Added business-time-zone report periods, heatmap and group totals, sign-in/device history, named caller blocking for simulations, and account departure. | Five automated tests passed. Coverage includes date boundaries, role isolation, caller blocking, and session revocation. Visual acceptance and carrier screening remain pending. |
 
+| 2026-11-23 | Application services | Added commerce, carrier request, delivery, lifecycle, recovery, registration, and routing-policy services with corresponding Workspace tools. Added durable job retries, signed provider events, wallet reservations, recording retention/playback, invoice schedules/voiding/email requests, payout preparation, reviewed credits, signup approval, report views, number quarantine, and flow revisions. | Ten automated tests passed. Coverage includes settlement retries, atomic number activation and rollback, credit deduplication, retention, scoped recordings, permissions, approval, recovery, and retry history. Native provider adapters/configuration, visual verification, and live acceptance remain open. |
+
+| 2026-11-23 | Provider result contracts | Added timed buyer auctions, stored bid responses and awards, conversation and caller-data requests/results, booking confirmations, and a continuous job worker. | Ten automated tests passed with additional assertions for returned-bid settlement, result replay, booking deduplication, and transcript alerts. No provider configured or live acceptance performed. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

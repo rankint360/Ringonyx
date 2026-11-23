@@ -65,13 +65,14 @@ export async function renderManagement({ request, escape: e, money, session, for
         (owner ? section('Team sign-ins',rows(['When','Person','Event','Device'],data.teamHistory.map(item =>
           [e(new Date(item.created).toLocaleString()),e(item.email),e(item.event),e(item.device)]))) : '');
     } else if (tab === 'billing') {
-      root.innerHTML += '<h2>Plan</h2><p>Commercial plans are awaiting payment integration.</p><div class="plan-grid">' +
+      root.innerHTML += '<h2>Plan</h2><p><a href="/workspace-tools?tab=commerce">Manage trial, upgrade requests, wallet and usage</a></p><div class="plan-grid">' +
         ['Free','Individual','Network'].map(name => section(name, '<p>' +
           ({Free:'Number setup and local call workflows',Individual:'Site rentals, attribution and customer portals',Network:'Buyer and publisher operations'}[name]) +
-          '</p><p>Pricing and activation pending.</p>')).join('') + '</div>' +
+          '</p><a href="/workspace-tools?tab=commerce">Open plan controls</a>')).join('') + '</div>' +
         section('Customer payments','<p>Manage issued invoices and manually recorded payments and credits.</p><a href="/invoices">Open invoices →</a>');
     } else if (tab === 'integrations') {
       root.innerHTML += '<h2>Apps</h2><p>Provider connections need configuration. Local exports and developer access are available under Operations.</p>' +
+        '<p><a href="/workspace-tools?tab=delivery">Configure encrypted credentials, endpoints and delivery jobs</a></p>' +
         ['Google Ads','Meta','HubSpot','Salesforce','Transcription','Caller lookup','Caller profiles','Slack'].map(name =>
           '<details class="integration-row"><summary>' + name + ' <span>Not connected</span></summary><p>Provider authorization and event delivery are pending.</p></details>').join('') +
         section('API, webhooks and migration','<a href="/operations">Manage developer keys, signed event previews, CSV imports and exports →</a>');

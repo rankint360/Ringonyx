@@ -1,5 +1,9 @@
 export function initializeBilling(db) {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS invoice_lifecycle (
+      kind TEXT NOT NULL, invoice TEXT NOT NULL, due TEXT NOT NULL, voided TEXT, reason TEXT,
+      PRIMARY KEY(kind,invoice)
+    );
     CREATE TABLE IF NOT EXISTS invoices (
       id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES accounts(id),
       renter TEXT NOT NULL REFERENCES renters(id), created TEXT NOT NULL
@@ -56,6 +60,7 @@ export function billing({ query, run, transaction, id, now, fail }) {
   function invoiceDetails(records) {
     return records.map(invoice => ({
       ...invoice,
+      ...query("SELECT due,voided,reason AS void_reason FROM invoice_lifecycle WHERE kind='renter' AND invoice=?",invoice.id)[0],
       lines: query(`SELECT 'call' AS kind, c.created, c.source AS reference, l.cents, c.id AS call
         FROM invoice_lines l JOIN calls c ON c.id=l.call WHERE l.invoice=?
         UNION ALL SELECT 'booking', created, reference, cents, NULL FROM booking_charges WHERE invoice=?
@@ -131,17 +136,19 @@ export function billing({ query, run, transaction, id, now, fail }) {
         return { renter, period, cents };
       });
     },
-    apply(account, invoice, entry) {
+    apply(account, invoice, entry, onApplied = () => {}) {
       return transaction(() => {
         const [record] = query(summary + ' WHERE i.id=? AND i.account=? GROUP BY i.id', invoice, account);
         if (!record) fail('Unknown invoice.', 404);
         const [prior] = query('SELECT kind, cents FROM invoice_entries WHERE invoice=? AND reference=?', invoice, entry.reference);
         if (prior) {
           if (prior.cents !== entry.cents || prior.kind !== entry.kind) fail('Reference already used for another entry.', 409);
+          onApplied();
           return { balance: record.cents - record.applied };
         }
         if (entry.cents > record.cents - record.applied) fail('Amount exceeds the invoice balance.', 409);
         run('INSERT INTO invoice_entries VALUES (?, ?, ?, ?, ?)', invoice, entry.reference, entry.kind, entry.cents, now());
+        onApplied();
         return { balance: record.cents - record.applied - entry.cents };
       });
     },

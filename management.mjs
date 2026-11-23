@@ -22,6 +22,14 @@ export function management(db, { query, run, transaction, fail, required, now })
       account TEXT NOT NULL REFERENCES accounts(id), list TEXT NOT NULL, value TEXT NOT NULL,
       blocked INTEGER NOT NULL, PRIMARY KEY(account,list,value)
     );
+    CREATE TABLE IF NOT EXISTS number_management (
+      site TEXT PRIMARY KEY REFERENCES sites(id), quarantined INTEGER NOT NULL DEFAULT 0,
+      monthly_cents INTEGER NOT NULL DEFAULT 0, offer TEXT REFERENCES publisher_offers(id)
+    );
+    CREATE TABLE IF NOT EXISTS saved_reports (
+      account TEXT NOT NULL REFERENCES accounts(id), name TEXT NOT NULL, config TEXT NOT NULL,
+      PRIMARY KEY(account,name)
+    );
   `);
   function owner(user) {
     if (user.role !== 'owner') fail('Workspace owner access required.', 403);
@@ -54,6 +62,8 @@ export function management(db, { query, run, transaction, fail, required, now })
         name: query('SELECT name FROM user_profiles WHERE user=?', user.id)[0]?.name ?? '',
         email: user.email,
         callerLists: query('SELECT list,value,blocked FROM caller_lists WHERE account=? ORDER BY list,value', user.account),
+        numbers: query('SELECT n.* FROM number_management n JOIN sites s ON s.id=n.site WHERE s.account=?',user.account),
+        reportViews:query('SELECT name,config FROM saved_reports WHERE account=? ORDER BY name',user.account).map(row=>({...row,config:JSON.parse(row.config)})),
         twoFactor: factors.enabled(user.id),
         history: query('SELECT event,device,address,created FROM login_history WHERE user=? ORDER BY id DESC LIMIT 100', user.id),
         teamHistory: user.role === 'owner' ? query(`SELECT u.email,h.event,h.device,h.address,h.created
@@ -110,7 +120,34 @@ export function management(db, { query, run, transaction, fail, required, now })
           return { signedOut: true };
         });
       }
+      if (action==='report-view' || action==='delete-report-view') {
+        if (user.role==='viewer') fail('Read-only account.',403);
+        const name=required(data.name,'view name');
+        if (action==='delete-report-view') run('DELETE FROM saved_reports WHERE account=? AND name=?',user.account,name);
+        else {
+          if (!data.config || typeof data.config!=='object'||Array.isArray(data.config)) fail('Invalid report view.');
+          const json=JSON.stringify(data.config);
+          if (json.length>4000) fail('Report view is too large.');
+          run('INSERT INTO saved_reports VALUES (?,?,?) ON CONFLICT(account,name) DO UPDATE SET config=excluded.config',user.account,name,json);
+        }
+        return {saved:true};
+      }
       owner(user);
+      if (action==='numbers') {
+        if (!Array.isArray(data.sites)||!data.sites.length||data.sites.length>100) fail('Select 1 to 100 numbers.');
+        if (typeof data.quarantined!=='boolean') fail('Choose a quarantine status.');
+        if (!Number.isSafeInteger(data.monthly)||data.monthly<0||data.monthly>1000000) fail('Invalid monthly fee.');
+        return transaction(()=>{
+          if (data.offer && !query('SELECT id FROM publisher_offers WHERE id=? AND account=?',data.offer,user.account).length) fail('Unknown publisher offer.',404);
+          for (const site of new Set(data.sites)) {
+            if (!query('SELECT id FROM sites WHERE id=? AND account=?',site,user.account).length) fail('Unknown site.',404);
+            run(`INSERT INTO number_management VALUES (?,?,?,?) ON CONFLICT(site)
+              DO UPDATE SET quarantined=excluded.quarantined,monthly_cents=excluded.monthly_cents,offer=excluded.offer`,
+              site,Number(data.quarantined),data.monthly,data.offer||null);
+          }
+          return {saved:true};
+        });
+      }
       if (action === 'caller-list') {
         const list = required(data.list, 'list name');
         const value = required(data.value, 'phone number');

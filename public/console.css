@@ -72,3 +72,8 @@
 .workspace-console .heat-cell { padding:0; min-height:25px; border:0; border-radius:3px; font-size:10px;
   background:color-mix(in srgb,#fa7912 calc(var(--intensity) * 100%),#202024); color:#f5f5f7; }
 .workspace-console .heat-cell:focus-visible { outline:2px solid #ff9c54; outline-offset:1px; }
+
+.flow-target { display:flex; align-items:center; gap:8px; padding:12px; margin:8px 0; border:1px solid var(--line); border-radius:10px; background:var(--raised); cursor:grab; }
+.flow-target span { flex:1; }
+.workspace-console #flow-targets { padding-left:0; }
+.workspace-console audio { max-width:100%; }

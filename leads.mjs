@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-export function webLeads(db, { query, run, transaction, required, phone, whole, fail, now }) {
+export function webLeads(db, { query, run, transaction, required, phone, whole, fail, now, onEvent = () => {} }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS web_leads (
       id TEXT PRIMARY KEY, site TEXT NOT NULL REFERENCES sites(id), channel TEXT NOT NULL,
@@ -78,6 +78,7 @@ export function webLeads(db, { query, run, transaction, required, phone, whole, 
         const id = randomUUID();
         run('INSERT INTO web_leads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           id, site, channel, name, email, number, message, region, source, campaign, now());
+        onEvent(account,{id:'lead-captured:'+id,type:'lead.captured',lead:{id,site,channel,name,email,phone:number,message,region,source,campaign}});
         return { id, duplicate: false };
       });
     },
@@ -109,6 +110,7 @@ export function webLeads(db, { query, run, transaction, required, phone, whole, 
         if (!buyer) fail('Buyer is unavailable for this lead.', 409);
         const created = now();
         run('INSERT INTO lead_deliveries VALUES (?, ?, ?, ?, ?, ?)', lead.id, buyer.id, mode, quote?.id ?? null, quote?.cents ?? null, created);
+        onEvent(account,{id:'lead-delivered:'+lead.id,type:'lead.delivered',lead,buyer:buyer.id,mode,created});
         return { lead: lead.id, buyer: buyer.id, mode, quote: quote?.id ?? null, cents: quote?.cents ?? null, created };
       });
     }

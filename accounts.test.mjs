@@ -568,6 +568,16 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   await post(owner, 'management/customer-state', { kind: 'renter', id: renter.id, state: 'archived' }, 200);
   await post(owner, 'assignments', assignment, 409);
   await post(owner, 'management/customer-state', { kind: 'renter', id: renter.id, state: 'active' }, 200);
+  await post(viewer,'workspace-tools/commerce/trial',{plan:'individual'},403);
+  const applicant={name:'Application pending',email:'applicant@example.test',password};
+  await post(undefined,'register',applicant,202);
+  await api('login',{body:{email:applicant.email,password},status:403});
+  const pending=(await api('admin',{cookie:owner})).data.accounts.find(row=>row.name===applicant.name);
+  assert.equal(pending.state,'pending');
+  await post(owner,'admin',{action:'workspace',id:pending.id,state:'approved'},200);
+  const applicantSession=await signIn(applicant.email);
+  await post(applicantSession,'renters',{name:'First customer',destination:'+16025550700'});
+  await post(applicantSession,'renters',{name:'Second customer',destination:'+16025550701'},409);
   await post(owner, 'logout', {}, 200);
   await api('session', { cookie: owner, status: 401 });
 });

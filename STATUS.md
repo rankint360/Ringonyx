@@ -1,10 +1,12 @@
 # Ringonyx build status
 
-Screenshot management work adds websites, customer directories, invoice/payout/dispute views, routing lists, and settings tabs. Business settings, team access, ownership transfer, profile/password controls, authenticator enrollment, session/device details, login history, account departure, and named caller lists are functional locally. Reports use the business time zone for date ranges and daily groups and include a heatmap and grouped totals. Carrier, plan/payment activation, automatic recording retention, automatic billing adjustments, and full screenshot parity remain pending.
+Application follow-up on 2026-11-23 adds Workspace tools for subscription trials and plan requests, wallet accounting and usage, carrier operation requests, durable delivery and encrypted credentials, invoice schedules and lifecycle, payout preparation, audio upload/playback/retention, reviewed charge adjustments, and routing policies with target editing and version restore. Public registration enters a platform approval queue. Password recovery queues a single-use reset email. Reports support custom dates, saved views, and column selection.
 
-Screenshot-based console work adds a dark orange sidebar layout and data-backed overview, call search and filters, number inventory, callback requests, message search, and reports. Number purchasing, wallet funding, and advanced report controls remain pending. Browser visual acceptance is pending.
+The same build adds timed buyer auctions with rechecked eligibility and winning-bid settlement, plus request/result processing for transcription, model analysis, caller data, and booking confirmation. Transcript terms produce stored alerts and optional queued notifications. The optional job worker handles deadlines, maintenance, and delivery. Native provider transports remain integration work.
 
-Platform admin console manages workspace sign-in approval, user access, and the Twilio inbound voice switch. Admin routes require both the designated owner account and the exact hostname configured in `RINGONYX_ADMIN_HOST`. The custom domain and DNS still need to be configured in Render.
+Existing workspaces retain legacy access until an owner opts into a managed plan. Draft plan prices of $19 and $69 follow the supplied screenshots and require commercial confirmation before payment activation. Payment and carrier requests await signed adapter events. Native provider adapters, OAuth, live WebRTC/voice/AI execution, configuration, visual acceptance, and end-to-end provider testing remain deferred. The generic HTTPS outbox is implemented, with dispatch disabled by default.
+
+Platform admin console manages workspace approval, user access, provider connection metadata and encrypted credentials, and the Twilio inbound voice switch. Admin routes require both the designated owner account and the configured admin hostname. Custom-domain DNS and certificate completion have not been confirmed.
 
 Update this file after each feature. Record changes and verification in [RECORD_REGISTER.md](RECORD_REGISTER.md).
 
@@ -34,25 +36,25 @@ Phase 8 local release preparation passed on 2026-11-12. The production-mode test
 | Billing | 08 | Idempotent per-call qualification and charge recording | Implemented |
 | Site rentals | 09 | Renter portal with scoped call and charge history | Implemented |
 | Foundation | 10 | Workspace sign-in, roles, and tenant isolation | Implemented and tested locally |
-| Calls | 11 | Carrier number provisioning | Local area-code request drafts implemented; carrier purchase deferred |
+| Calls | 11 | Carrier number provisioning | Search requests, quoted inventory, purchase reservations, and signed activation events implemented. Native carrier adapter deferred |
 | Calls | 12 | Live forwarding and authenticated carrier callbacks | Implemented locally; carrier acceptance pending |
-| Calls | 13 | Number porting | Local number port request drafts implemented; carrier submission deferred |
+| Calls | 13 | Number porting | Port request queue and signed completion processing implemented. Carrier submission deferred |
 | Attribution | 14 | Dynamic number insertion | Local number pools, visitor leases, and embed script implemented; carrier-backed pools deferred |
 | Attribution | 15 | Visitor and campaign attribution | Local source and campaign capture verified on simulated calls |
 | Calls | 16 | IVR builder | Local keypad menus applied to call simulations; carrier execution deferred |
-| Calls | 17 | Fallback and ring-tree routing | Local ordered fallback applied to call simulations; carrier execution deferred |
-| Calls | 18 | Recording and consent settings | Local disclosure and consent decisions applied to simulated calls; audio capture and playback deferred |
+| Calls | 17 | Fallback and ring-tree routing | Target editor, revisions, hours/ZIPs, weighted/round-robin/ring-all simulations implemented. Carrier execution deferred |
+| Calls | 18 | Recording and consent settings | Local consent, audio upload, scoped playback, byte ranges, and retention maintenance implemented. Carrier audio capture deferred |
 | Calls | 19 | Browser callbacks | Local request queue and cancellation implemented; dialing deferred |
 | Calls | 20 | Inbound SMS | Local simulated inbox implemented; carrier delivery deferred |
 | Billing | 21 | Recurring and hybrid rent | Local monthly rate schedules and invoice generation implemented |
-| Billing | 22 | Verified booking-based charges | Local operator verification and booking charges implemented; external booking confirmation deferred |
-| Billing | 23 | Invoice generation and delivery | Local call, rent, and booking invoices visible in renter portal; external delivery deferred |
+| Billing | 22 | Verified booking-based charges | Operator verification and signed booking-result processing implemented. Native booking adapter deferred |
+| Billing | 23 | Invoice generation and delivery | Local schedules, due dates, voiding, and email jobs implemented. External delivery configuration deferred |
 | Billing | 24 | Payment reconciliation and dispute adjustments | Local payment, credit, and dispute resolution implemented |
 | Network | 25 | Buyer contracts and portal | Implemented locally |
 | Network | 26 | Buyer coverage, caps and concurrency limits | Implemented for simulated calls |
 | Network | 27 | Publisher offers and portal | Implemented locally |
-| Network | 28 | Publisher payout ledger and statements | Local accrual and statements implemented; disbursement deferred |
-| Network | 29 | Buyer ping/post and live bidding | Local bids and floors implemented; external buyer responses deferred |
+| Network | 28 | Publisher payout ledger and statements | Accrual, statements, payout reservations, and delivery jobs implemented. Transfers deferred |
+| Network | 29 | Buyer ping/post and live bidding | Local contracts and timed bid request/response auctions implemented. Native buyer adapters and live connections deferred |
 | Network | 30 | Publisher-side ping/post | Local authenticated endpoints implemented |
 | Network | 31 | Predictive routing | Local historical revenue ranking implemented |
 | Network | 32 | Traffic quality and suppression rules | Duplicate reference protection, regional suppression, partner pauses, and routing decisions implemented locally |
@@ -61,12 +63,12 @@ Phase 8 local release preparation passed on 2026-11-12. The production-mode test
 | Leads | 35 | Validation and deduplication | Contact validation and site-scoped deduplication implemented |
 | Leads | 36 | Direct-post lead delivery | Local buyer inbox delivery implemented |
 | Leads | 37 | Ping/post lead delivery | Local price quotes and buyer inbox delivery implemented |
-| Analytics | 38 | Transcription | Local transcript entry and review implemented; audio transcription deferred |
-| Analytics | 39 | AI summaries and qualification | Local excerpts, booking-intent rules, and human review implemented; model integration deferred |
+| Analytics | 38 | Transcription | Transcript entry, recording-based requests, and signed result storage implemented. Transcription provider adapter deferred |
+| Analytics | 39 | AI summaries and qualification | Local rules and human review plus signed model-result, scoring, and transcript alert workflows implemented. Model provider adapter deferred |
 | Analytics | 40 | Conversation coaching | Suggested and editable coaching notes implemented locally |
 | Analytics | 41 | AI answering | Local response configuration and simulation implemented; live voice integration deferred |
 | Analytics | 42 | Campaign and financial reports | Local campaign, renter invoice, and network settlement reporting implemented |
-| Integrations | 43 | Signed outbound webhooks | Local audit event signing implemented. Outbound delivery deferred |
+| Integrations | 43 | Signed outbound webhooks | Durable signed HTTPS jobs, attempts, retries, and replay/cancel controls implemented. Dispatch configuration deferred |
 | Integrations | 44 | Ad conversion exports | Local conversion CSV implemented. Ad platform sync deferred |
 | Integrations | 45 | CRM integration | Local contact CSV implemented. CRM sync deferred |
 | Integrations | 46 | CSV migration | Local tracking site import implemented |
@@ -77,8 +79,8 @@ Phase 8 local release preparation passed on 2026-11-12. The production-mode test
 | Operations | 51 | Health monitoring and backups | Local health endpoint and SQLite snapshot command implemented. Hosted monitoring deferred |
 | Release | 51a | Marketing homepage, interactive call walkthrough, and Ringonyx brand assets | Implemented, including buyer fallback, campaign attribution, and settlement demos |
 | Release | 52 | GitHub source publication | Phases 1–8 published to main |
-| Release | 53 | Staging deployment | Deployment and rollback procedures documented. Hosted rollout deferred |
-| Release | 54 | Acceptance testing | Local tests passed. Hosted and live provider acceptance deferred |
+| Release | 53 | Staging deployment | User confirmed Render deployment and health check. New changes await deployment verification |
+| Release | 54 | Acceptance testing | User confirmed hosted simulated call through renter invoice. New UI and live provider acceptance deferred |
 | Release | 55 | Public launch | Launch checks documented. Public rollout deferred |
 
 The local slice covers a tracked call from simulated arrival through qualified charge and renter handoff. Live forwarding and customer-ready billing remain open.
