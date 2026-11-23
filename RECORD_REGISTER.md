@@ -94,4 +94,6 @@
 
 | 2026-11-22 | Screenshot management | Added settings and customer management views, team invitations, profile/password/session controls, authenticator setup and recovery, and number filters. | Four tests passed, including an RFC TOTP vector, replay/recovery checks, invitation scope, owner restrictions, and archived-customer assignment prevention. Visual acceptance remains pending. |
 
+| 2026-11-23 | Screenshot follow-up | Added business-time-zone report periods, heatmap and group totals, sign-in/device history, named caller blocking for simulations, and account departure. | Five automated tests passed. Coverage includes date boundaries, role isolation, caller blocking, and session revocation. Visual acceptance and carrier screening remain pending. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.

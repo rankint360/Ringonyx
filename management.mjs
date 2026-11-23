@@ -18,6 +18,10 @@ export function management(db, { query, run, transaction, fail, required, now })
       account TEXT NOT NULL REFERENCES accounts(id), kind TEXT NOT NULL, party TEXT NOT NULL,
       state TEXT NOT NULL, PRIMARY KEY(account,kind,party)
     );
+    CREATE TABLE IF NOT EXISTS caller_lists (
+      account TEXT NOT NULL REFERENCES accounts(id), list TEXT NOT NULL, value TEXT NOT NULL,
+      blocked INTEGER NOT NULL, PRIMARY KEY(account,list,value)
+    );
   `);
   function owner(user) {
     if (user.role !== 'owner') fail('Workspace owner access required.', 403);
@@ -49,14 +53,19 @@ export function management(db, { query, run, transaction, fail, required, now })
           { timezone: 'America/Los_Angeles', alert_terms: '' },
         name: query('SELECT name FROM user_profiles WHERE user=?', user.id)[0]?.name ?? '',
         email: user.email,
+        callerLists: query('SELECT list,value,blocked FROM caller_lists WHERE account=? ORDER BY list,value', user.account),
         twoFactor: factors.enabled(user.id),
+        history: query('SELECT event,device,address,created FROM login_history WHERE user=? ORDER BY id DESC LIMIT 100', user.id),
+        teamHistory: user.role === 'owner' ? query(`SELECT u.email,h.event,h.device,h.address,h.created
+          FROM login_history h JOIN users u ON u.id=h.user WHERE u.account=? ORDER BY h.id DESC LIMIT 100`, user.account) : [],
         team: user.role === 'owner' ? query(`SELECT u.id,u.email,u.role,p.name FROM users u
           LEFT JOIN user_profiles p ON p.user=u.id LEFT JOIN renter_users r ON r.user=u.id
           WHERE u.account=? AND r.user IS NULL ORDER BY u.email`, user.account) : [],
         invitations: user.role === 'owner' ? query('SELECT email,role,expires FROM team_invites WHERE account=?', user.account) : [],
         states: query('SELECT kind,party,state FROM customer_states WHERE account=?', user.account),
-        sessions: query('SELECT token,expires FROM sessions WHERE user=? ORDER BY expires DESC', user.id)
-          .map(row => ({ id: row.token, expires: row.expires }))
+        sessions: query(`SELECT s.token,s.expires,d.device,d.address,d.created FROM sessions s
+          LEFT JOIN session_devices d ON d.token=s.token WHERE s.user=? ORDER BY s.expires DESC`, user.id)
+          .map(({ token, ...row }) => ({ ...row, id: token }))
       };
     },
     write(user, action, data) {
@@ -91,7 +100,27 @@ export function management(db, { query, run, transaction, fail, required, now })
         run('DELETE FROM sessions WHERE token=? AND user=?', required(data.id, 'session'), user.id);
         return { saved: true };
       }
+      if (action === 'leave') {
+        password(user, data.current);
+        if (user.role === 'owner') fail('Transfer ownership before leaving.', 409);
+        if (data.confirm !== 'LEAVE') fail('Type LEAVE to confirm.');
+        return transaction(() => {
+          run('INSERT OR IGNORE INTO platform_disabled_users VALUES (?)', user.id);
+          run('DELETE FROM sessions WHERE user=?', user.id);
+          return { signedOut: true };
+        });
+      }
       owner(user);
+      if (action === 'caller-list') {
+        const list = required(data.list, 'list name');
+        const value = required(data.value, 'phone number');
+        if (!/^\+[1-9]\d{7,14}$/.test(value)) fail('Use an international phone number.');
+        if (!['block', 'allow', 'remove'].includes(data.operation)) fail('Choose block, allow, or remove.');
+        if (data.operation === 'remove') run('DELETE FROM caller_lists WHERE account=? AND list=? AND value=?', user.account, list, value);
+        else run(`INSERT INTO caller_lists VALUES (?,?,?,?) ON CONFLICT(account,list,value)
+          DO UPDATE SET blocked=excluded.blocked`, user.account, list, value, Number(data.operation === 'block'));
+        return { saved: true };
+      }
       if (action === 'business') {
         const name = required(data.name, 'business name');
         const timezone = required(data.timezone, 'time zone');

@@ -40,7 +40,8 @@ const field = (name, label, options = '') => `<label>${label}<input name="${name
 const select = (name, label, items, value, caption) => `<label>${label}<select required name="${name}"><option value="">Select</option>${items.map(item => `<option value="${escape(item[value])}">${escape(item[caption])}</option>`).join('')}</select></label>`;
 const form = (title, action, fields, button) => `<section><h2>${title}</h2><form data-action="${action}">${fields}<button>${button}</button></form></section>`;
 const routingScenario = '<label>Primary renter status<select name="scenario"><option value="normal">Available</option>' +
-  '<option value="busy">Busy</option><option value="no-answer">No answer</option><option value="after-hours">After hours</option></select></label>';
+  '<option value="busy">Busy</option><option value="no-answer">No answer</option><option value="after-hours">After hours</option></select></label>' +
+  '<label>Caller number (optional)<input name="caller" placeholder="+16025550102"></label>';
 function invoiceList(invoices) {
   return `<section><h2>Invoices</h2>${invoices.length ? '<ul>' + invoices.map(invoice =>
     `<li>${escape(invoice.renter_name)} · ${escape(new Date(invoice.created).toLocaleDateString())}

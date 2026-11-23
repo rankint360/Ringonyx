@@ -73,8 +73,14 @@ export function routing(db, { query, run, transaction, required, phone, fail }) 
       });
       return destinations(site);
     },
-    preview(account, site, failed, digit, scenario = 'normal') {
+    preview(account, site, failed, digit, scenario = 'normal', caller) {
       check(account, site);
+      if (caller) {
+        phone(caller);
+        if (query('SELECT value FROM caller_lists WHERE account=? AND value=? AND blocked=1', account, caller).length) {
+          return { steps: [], next: null, prompt: null, menuStatus: 'blocked-caller' };
+        }
+      }
       if (!['normal', 'busy', 'no-answer', 'after-hours'].includes(scenario)) fail('Unknown routing scenario.');
       if (!Array.isArray(failed) || failed.length > 11) fail('Invalid failed destinations.');
       const attempted = new Set(failed.map(phone));

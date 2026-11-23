@@ -549,6 +549,22 @@ test('workspace sessions isolate reads, writes, assignments, and call completion
   await post(undefined, 'team-accept', { token: teamInvitation.token, password }, 404);
   const memberSession = await signIn('teammate@example.test');
   await post(memberSession, 'sites', { name: 'Denied', number: '+16025550888' }, 403);
+  const memberSettings = (await api('management', { cookie: memberSession })).data;
+  assert.ok(memberSettings.history.some(row => row.event === 'Signed in'));
+  assert.ok(memberSettings.sessions.some(row => row.device));
+  assert.equal(memberSettings.teamHistory.length, 0);
+  await post(owner, 'management/caller-list', { list: 'Local suppression', value: '+16025550777', operation: 'block' }, 200);
+  await post(memberSession, 'management/caller-list', { list: 'Denied', value: '+16025550777', operation: 'remove' }, 403);
+  assert.equal((await post(owner, 'routing/preview', {
+    site: site.id, caller: '+16025550777'
+  }, 200)).menuStatus, 'blocked-caller');
+  await post(owner, 'management/caller-list', { list: 'Local suppression', value: '+16025550777', operation: 'remove' }, 200);
+  assert.notEqual((await post(owner, 'routing/preview', {
+    site: site.id, caller: '+16025550777'
+  }, 200)).menuStatus, 'blocked-caller');
+  await post(owner, 'management/leave', { current: password, confirm: 'LEAVE' }, 409);
+  await post(memberSession, 'management/leave', { current: password, confirm: 'LEAVE' }, 200);
+  await api('session', { cookie: memberSession, status: 401 });
   await post(owner, 'management/customer-state', { kind: 'renter', id: renter.id, state: 'archived' }, 200);
   await post(owner, 'assignments', assignment, 409);
   await post(owner, 'management/customer-state', { kind: 'renter', id: renter.id, state: 'active' }, 200);

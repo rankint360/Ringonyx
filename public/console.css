@@ -66,3 +66,9 @@
 .workspace-console form input,.workspace-console form select { width:100%; }
 .workspace-console a:focus-visible,.workspace-console button:focus-visible { outline:2px solid #fa7912; outline-offset:4px; }
 @media(max-width:800px) { .plan-grid { grid-template-columns:1fr; } }
+
+.heatmap { display:grid; grid-template-columns:40px repeat(24,minmax(20px,1fr)); gap:3px; overflow:auto; padding-bottom:8px; }
+.heatmap > span { font-size:12px; color:#96969f; align-self:center; }
+.workspace-console .heat-cell { padding:0; min-height:25px; border:0; border-radius:3px; font-size:10px;
+  background:color-mix(in srgb,#fa7912 calc(var(--intensity) * 100%),#202024); color:#f5f5f7; }
+.workspace-console .heat-cell:focus-visible { outline:2px solid #ff9c54; outline-offset:1px; }

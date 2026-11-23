@@ -1,3 +1,4 @@
+import { businessDay, inDateRange } from './dates.js';
 const links = [
   ['Home', '/overview', '⌂'], ['Calls', '/calls', '↙'], ['Dialer', '/dialer', '♧'],
   ['Messages', '/messages', '□'], ['Leads', '/leads', '▤'], ['Reports', '/reports', '▦'],
@@ -55,20 +56,35 @@ export async function renderConsole({ request, escape: e, money, history }) {
   if (!['/overview', '/calls', '/numbers', '/dialer', '/messages', '/reports'].includes(path)) return false;
   const dashboard = document.querySelector('#dashboard');
   const [calls, sites] = await Promise.all([request('calls'), request('sites')]);
+  const timezone = (await request('management')).business.timezone;
   const title = (heading, description) => '<h1>' + heading + '</h1><p class="console-muted">' + description + '</p>';
   const panel = content => '<section class="console-panel">' + content + '</section>';
   const tools = '<div class="console-toolbar"><label>Date range <select id="period"><option value="7">7 days</option>' +
     '<option value="1">Today</option><option value="2">Yesterday</option><option value="30">30 days</option>' +
     '<option value="0">All time</option></select></label><button id="export">↓ CSV</button></div>';
   let filtered = calls;
+  function heatmap(rows) {
+    const buckets = Array.from({ length: 7 }, () => Array(24).fill(0));
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const formatter = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short', hour: 'numeric', hourCycle: 'h23' });
+    for (const call of rows) {
+      const parts = formatter.formatToParts(new Date(call.created));
+      const day = days.indexOf(parts.find(part => part.type === 'weekday').value);
+      const hour = Number(parts.find(part => part.type === 'hour').value);
+      buckets[day][hour]++;
+    }
+    const max = Math.max(1, ...buckets.flat());
+    return '<h3>When people call</h3><p>Calls by day and hour · ' + e(timezone) + '</p>' +
+      '<div class="heatmap">' + buckets.map((hours, day) => '<span>' + days[day] + '</span>' +
+        hours.map((count, hour) => '<button type="button" class="heat-cell" style="--intensity:' +
+          (count ? .2 + .8 * count / max : 0) + '" aria-label="' + days[day] + ' ' + hour + ':00 · ' + count +
+          ' calls" title="' + days[day] + ' ' + hour + ':00 · ' + count + ' calls" data-hour="' + hour +
+          '" data-day="' + day + '">' + (count || '') + '</button>').join('')).join('') +
+      '</div><p id="heat-selection" role="status">Select a square to inspect its call count.</p>';
+  }
   function dateFilter() {
     const days = Number(document.querySelector('#period').value);
-    const now = new Date();
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - (days === 2 ? 1 : days - 1));
-    const end = days === 2 ? new Date(new Date(now).setHours(0, 0, 0, 0)) : now;
-    return calls.filter(call => !days || (new Date(call.created) >= start && new Date(call.created) <= end));
+    return calls.filter(call => inDateRange(call.created, days, timezone));
   }
   if (path === '/overview' || path === '/reports') {
     dashboard.innerHTML = title(path === '/overview' ? 'Overview' : 'Reports', 'Calls, outcomes and qualified revenue') +
@@ -80,7 +96,7 @@ export async function renderConsole({ request, escape: e, money, history }) {
       const billable = filtered.filter(call => call.cents > 0).length;
       const groups = new Map();
       for (const call of filtered) {
-        const day = new Date(call.created).toLocaleDateString();
+        const day = businessDay(call.created, timezone);
         groups.set(day, (groups.get(day) || 0) + 1);
       }
       const chart = groups.size ? [...groups].reverse().map(([day, count]) =>
@@ -97,7 +113,33 @@ export async function renderConsole({ request, escape: e, money, history }) {
         '<div class="report-grid">' + panel('<h3>Calls per day</h3>' + chart) +
         panel('<h3>What happened to calls</h3>' + ['answered', 'missed', 'pending', 'unrouted'].map(outcome =>
           '<p class="outcome-row"><span>' + outcome + '</span><b>' + filtered.filter(call => call.outcome === outcome).length + '</b></p>').join('')) + '</div>' +
+        panel(heatmap(filtered)) +
+        (path === '/reports' ? panel('<h3>Group results</h3><select id="report-group" aria-label="Group results">' +
+          '<option value="source">Traffic source</option><option value="site_name">Website</option>' +
+          '<option value="renter_name">Tenant / renter</option><option value="campaign">Campaign</option>' +
+          '<option value="outcome">Call status</option></select><div id="group-results"></div>') : '') +
         panel('<h3>Call log</h3>' + history(filtered, true));
+      for (const cell of document.querySelectorAll('.heat-cell')) cell.onclick = () => {
+        document.querySelector('#heat-selection').textContent = cell.getAttribute('aria-label');
+      };
+      const groupControl = document.querySelector('#report-group');
+      if (groupControl) {
+        const group = () => {
+          const totals = new Map();
+          for (const call of filtered) {
+            const key = call[groupControl.value] || 'Unassigned';
+            const row = totals.get(key) || { calls: 0, billable: 0, revenue: 0 };
+            row.calls++;
+            row.billable += Number(call.cents > 0);
+            row.revenue += call.cents;
+            totals.set(key, row);
+          }
+          document.querySelector('#group-results').innerHTML = table(['Group', 'Calls', 'Billable', 'Revenue'],
+            [...totals].map(([key, row]) => [e(key), row.calls, row.billable, money(row.revenue)]), 'No calls in this range.');
+        };
+        groupControl.onchange = group;
+        group();
+      }
     };
     document.querySelector('#period').addEventListener('change', draw);
     document.querySelector('#export').onclick = () => download(filtered);

@@ -67,6 +67,20 @@ export function provision(db, { account, name, email, password, role }) {
 
 export function accountAccess(db, { secure }) {
   const factors = security(db);
+  db.exec(`CREATE TABLE IF NOT EXISTS login_history (
+    id INTEGER PRIMARY KEY, user TEXT NOT NULL REFERENCES users(id), event TEXT NOT NULL,
+    device TEXT NOT NULL, address TEXT NOT NULL, created TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS session_devices (
+    token TEXT PRIMARY KEY, device TEXT NOT NULL, address TEXT NOT NULL, created TEXT NOT NULL
+  );`);
+  function log(user, req, event) {
+    if (!user) return;
+    db.prepare('DELETE FROM login_history WHERE created<?').run(new Date(Date.now() - 180 * 86400000).toISOString());
+    db.prepare('INSERT INTO login_history (user,event,device,address,created) VALUES (?,?,?,?,?)')
+      .run(user.id, event, String(req.headers['user-agent'] || 'Unknown browser').slice(0, 300),
+        req.socket.remoteAddress || '', new Date().toISOString());
+  }
   const attempts = new Map();
   const findUser = db.prepare(`SELECT u.*, a.name AS workspace FROM users u JOIN accounts a ON a.id=u.account WHERE u.email=?`);
   const findSession = db.prepare(`SELECT u.id, u.email, u.account, u.role, a.name AS workspace, ru.renter
@@ -128,8 +142,14 @@ export function accountAccess(db, { secure }) {
       const password = typeof data.password === 'string' && data.password.length <= 256 ? data.password : '';
       const user = findUser.get(email);
       const valid = timingSafeEqual(derive(password, user?.salt || 'ringonyx-sign-in'), user ? Buffer.from(user.hash, 'hex') : dummy);
-      if (!user || !valid) fail('Invalid email or password.', 401);
-      if (factors.enabled(user.id) && !factors.verify(user.id, data.code)) fail('Enter a valid authenticator or recovery code.', 401);
+      if (!user || !valid) {
+        log(user, req, 'Failed password');
+        fail('Invalid email or password.', 401);
+      }
+      if (factors.enabled(user.id) && !factors.verify(user.id, data.code)) {
+        log(user, req, 'Failed authenticator');
+        fail('Enter a valid authenticator or recovery code.', 401);
+      }
       if (!allowed(user)) fail('Platform administrator access required.', 403);
       if (db.prepare('SELECT user FROM platform_disabled_users WHERE user=?').get(user.id) ||
           db.prepare("SELECT account FROM platform_review WHERE account=? AND state<>'approved'").get(user.account)) {
@@ -140,6 +160,11 @@ export function accountAccess(db, { secure }) {
       db.prepare('DELETE FROM sessions WHERE expires<=?').run(now);
       const value = randomBytes(32).toString('hex');
       db.prepare('INSERT INTO sessions VALUES (?, ?, ?)').run(digest(value), user.id, now + lifetime);
+      db.prepare('DELETE FROM session_devices WHERE token NOT IN (SELECT token FROM sessions)').run();
+      db.prepare('INSERT INTO session_devices VALUES (?,?,?,?)').run(digest(value),
+        String(req.headers['user-agent'] || 'Unknown browser').slice(0, 300),
+        req.socket.remoteAddress || '', new Date().toISOString());
+      log(user, req, 'Signed in');
       res.setHeader('Set-Cookie', cookie(value, lifetime / 1000));
       return { email: user.email, role: user.role, workspace: user.workspace };
     },

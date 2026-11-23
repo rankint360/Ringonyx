@@ -79,7 +79,7 @@ const production = process.env.NODE_ENV === 'production';
 const access = accountAccess(db, { secure: production });
 const adminEmail = process.env.RINGONYX_ADMIN_EMAIL?.trim().toLowerCase();
 const adminHost = process.env.RINGONYX_ADMIN_HOST?.trim().toLowerCase();
-const adminPaths = new Set(['/admin', '/api/admin', '/api/session', '/api/login', '/api/logout', '/app.js', '/console.js', '/manage.js', '/console.css',
+const adminPaths = new Set(['/admin', '/api/admin', '/api/session', '/api/login', '/api/logout', '/app.js', '/console.js', '/manage.js', '/dates.js', '/console.css',
   '/style.css', '/brand.css', '/ringonyx-mark.svg', '/brand/favicons/favicon-32.png', '/brand/favicons/favicon-180.png']);
 const isAdmin = user => Boolean(adminEmail && user?.email === adminEmail && user.role === 'owner' && !user.renter);
 db.exec(`
@@ -208,7 +208,7 @@ function write(entity, data, account) {
   fail('Unknown endpoint', 404);
 }
 function simulate(site, source, account, data) {
-  const decision = routingPlans.preview(account, site.id, data.failed ?? [], data.digit, data.scenario);
+  const decision = routingPlans.preview(account, site.id, data.failed ?? [], data.digit, data.scenario, data.caller);
   const destination = decision.next?.destination ?? null;
   const [assignment] = destination ? query(`SELECT a.id FROM assignments a JOIN renters r ON r.id=a.renter
     WHERE a.site=? AND a.ended IS NULL AND r.destination=?`, site.id, destination) : [];
@@ -268,6 +268,7 @@ const assets = {
   '/handling': ['index.html', 'text/html'],
   '/invoices': ['index.html', 'text/html'],
   '/manage.js': ['manage.js', 'text/javascript'],
+  '/dates.js': ['dates.js', 'text/javascript'],
   '/overview': ['index.html', 'text/html'],
   '/calls': ['index.html', 'text/html'],
   '/numbers': ['index.html', 'text/html'],
@@ -556,7 +557,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && ['/api/routing', '/api/routing/preview'].includes(pathname)) {
       const data = await body(req);
       const site = required(data.site, 'site');
-      return json(pathname.endsWith('/preview') ? routingPlans.preview(user.account, site, data.failed ?? [], data.digit, data.scenario)
+      return json(pathname.endsWith('/preview') ? routingPlans.preview(user.account, site, data.failed ?? [], data.digit, data.scenario, data.caller)
         : routingPlans.save(user.account, site, data.routes));
     }
     if (req.method === 'GET' && pathname === '/api/network') return json(exchange.list(user.account, user.role));

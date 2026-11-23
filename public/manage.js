@@ -25,7 +25,11 @@ export async function renderManagement({ request, escape: e, money, session, for
         '<label>Alert terms<input name="terms" maxlength="1000" value="' + e(data.business.alert_terms) + '"></label>', 'Save business settings') :
         section('General', '<p>' + e(session.workspace) + ' · ' + e(data.business.timezone) + '</p>')) +
         (owner ? form('Branding', 'operations/brand', field('name', 'Portal brand name') +
-          field('accent', 'Accent', 'type="color" value="#fa7912"'), 'Save branding') : '');
+          field('accent', 'Accent', 'type="color" value="#fa7912"'), 'Save branding') : '') +
+        (owner ? section('Leave account', '<p>Transfer ownership to another teammate before leaving.</p><a href="/settings?tab=team">Manage ownership →</a>') :
+          form('Leave account','management/leave', '<p>This disables your sign-in and revokes all sessions. A platform administrator can restore access.</p>' +
+            field('current','Current password','type="password" autocomplete="current-password"') +
+            field('confirm','Type LEAVE to confirm'),'Leave account'));
     } else if (tab === 'team') {
       root.innerHTML += '<h2>Team</h2>' + rows(['Name','Email','Role'], data.team.map(member =>
         [e(member.name || '—'),e(member.email),e(member.role)]));
@@ -52,9 +56,14 @@ export async function renderManagement({ request, escape: e, money, session, for
           form('Confirm authenticator','management/totp-enable',
             field('current','Current password','type="password" autocomplete="current-password"') +
             field('code','Six-digit code','inputmode="numeric" autocomplete="one-time-code"'),'Enable authenticator')) +
-        section('Active sessions',rows(['Expires','Action'],data.sessions.map(item =>
-          [e(new Date(item.expires).toLocaleString()), '<form data-action="management/revoke-session"><input type="hidden" name="id" value="' +
-            e(item.id) + '"><button>Sign out session</button></form>'])));
+        section('Active sessions',rows(['Device','Server-observed address','Signed in','Expires','Action'],data.sessions.map(item =>
+          [e(item.device || 'Unknown'),e(item.address || '—'),e(item.created || '—'),
+            e(new Date(item.expires).toLocaleString()), '<form data-action="management/revoke-session"><input type="hidden" name="id" value="' +
+            e(item.id) + '"><button>Sign out session</button></form>']))) +
+        section('Login history',rows(['When','Event','Device','Server-observed address'],data.history.map(item =>
+          [e(new Date(item.created).toLocaleString()),e(item.event),e(item.device),e(item.address)]))) +
+        (owner ? section('Team sign-ins',rows(['When','Person','Event','Device'],data.teamHistory.map(item =>
+          [e(new Date(item.created).toLocaleString()),e(item.email),e(item.event),e(item.device)]))) : '');
     } else if (tab === 'billing') {
       root.innerHTML += '<h2>Plan</h2><p>Commercial plans are awaiting payment integration.</p><div class="plan-grid">' +
         ['Free','Individual','Network'].map(name => section(name, '<p>' +
@@ -107,8 +116,14 @@ export async function renderManagement({ request, escape: e, money, session, for
     const menus = await request('routing/menu');
     const tab = new URLSearchParams(location.search).get('tab') || 'rules';
     root.innerHTML = tabs([['Routing rules','/handling'],['Targets','/handling?tab=targets'],['Call flows','/handling?tab=flows'],
-      ['Live bidding','/network']]) + '<h1>Call handling</h1>';
-    if (tab === 'targets') root.innerHTML += section('Targets',rows(['Name','Phone'],[...renters,...network.buyers].map(row => [e(row.name),e(row.destination)])));
+      ['Live bidding','/network'],['Blocked callers and value lists','/handling?tab=lists']]) + '<h1>Call handling</h1>';
+    if (tab === 'lists') root.innerHTML += section('Caller lists',rows(['List','Number','Action'],data.callerLists.map(row =>
+      [e(row.list),e(row.value),row.blocked ? 'Blocked in simulator' : 'Listed']))) +
+      (owner ? form('Manage caller list','management/caller-list',field('list','List name') +
+        field('value','Caller number','placeholder="+16025550102"') +
+        options('operation','Action',['block','allow','remove']),'Save list entry') : '') +
+      '<p>Any blocked entry prevents simulated calls from routing. An allow entry only removes the block within its named list.</p>';
+    else if (tab === 'targets') root.innerHTML += section('Targets',rows(['Name','Phone'],[...renters,...network.buyers].map(row => [e(row.name),e(row.destination)])));
     else if (tab === 'flows') root.innerHTML += section('Phone menus',rows(['Site','Digit','Label','Destination'], menus.map(row =>
       [e(sites.find(site => site.id === row.site)?.name),e(row.digit),e(row.label),e(row.destination)]))) +
       '<a href="/app">Edit menus and test call flows →</a>';
