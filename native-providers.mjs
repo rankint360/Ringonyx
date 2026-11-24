@@ -22,6 +22,21 @@ export function nativeRequest(provider, endpoint, credentials, payload, context=
     return url;
   };
   const json = body => ({headers:{'Content-Type':'application/json'},body:JSON.stringify(body),method:'POST'});
+  if (provider==='carrier' && credentials.service==='telnyx') {
+    at('https://api.telnyx.com');
+    if (payload.type!=='carrier.search') throw Error('Telnyx currently supports inventory search only. Purchase and call execution are not connected.');
+    if (!['US','CA'].includes(payload.country) || !['local','toll-free'].includes(payload.kind)) throw Error('Invalid Telnyx inventory search.');
+    if (payload.area && !/^[2-9]\d{2}$/.test(payload.area)) throw Error('Invalid area code.');
+    const url=new URL('https://api.telnyx.com/v2/available_phone_numbers');
+    url.searchParams.set('filter[country_code]',payload.country);
+    url.searchParams.set('filter[phone_number_type]',payload.kind==='local'?'local':'toll_free');
+    url.searchParams.set('filter[features]','voice');
+    url.searchParams.set('filter[limit]','30');
+    url.searchParams.set('filter[best_effort]','false');
+    if (payload.area) url.searchParams.set('filter[national_destination_code]',payload.area);
+    if (payload.city && payload.kind==='local') url.searchParams.set('filter[locality]',payload.city);
+    return {url:url.href,method:'GET',headers:{Authorization:'Bearer '+need('apiKey')},response:'json',result:'telnyx-inventory'};
+  }
   if (provider==='bidding') {
     if (payload.type!=='buyer.bid-request') throw Error('Invalid bidding job.');
     const buyer=credentials.buyers?.[payload.buyer];
@@ -124,6 +139,23 @@ export function nativeRequest(provider, endpoint, credentials, payload, context=
 }
 
 export function nativeResult(request, body, payload, credentials) {
+  if (request.result==='telnyx-inventory') {
+    if (!Array.isArray(body.data) || body.data.length>100) throw Error('Invalid Telnyx inventory response.');
+    const cents=value=>{
+      if (typeof value!=='string' || !/^\d{1,5}(?:\.\d{1,6})?$/.test(value)) throw Error('Invalid Telnyx number price.');
+      const [dollars,fraction='']=value.split('.');
+      const micros=BigInt(dollars)*1000000n+BigInt(fraction.padEnd(6,'0'));
+      const result=Number((micros+9999n)/10000n);
+      if (result>1000000) throw Error('Telnyx quote exceeds the supported price limit.');
+      return result;
+    };
+    const offers=body.data.filter(row=>row.best_effort!==true).map(row=>{
+      const cost=row.cost_information;
+      if (cost?.currency!=='USD') throw Error('Telnyx inventory requires a USD price quote.');
+      return {number:row.phone_number,location:(row.region_information || []).map(region=>region.region_name).filter(Boolean).join(', ').slice(0,200) || 'Unspecified',monthly:cents(cost.monthly_cost),activation:cents(cost.upfront_cost)};
+    });
+    return {type:'carrier',request:payload.id,state:'complete',offers};
+  }
   if (request.result==='bid') {
     const cents=body[request.bidField];
     if (!Number.isSafeInteger(cents) || cents<0 || cents>1000000) throw Error('Buyer must return an integer bid in cents.');

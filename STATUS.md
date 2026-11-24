@@ -1,5 +1,7 @@
 # Ringonyx build status
 
+2026-11-24 Telnyx adoption starts with a native US/Canada number inventory adapter under the existing carrier connection. It validates USD quotes using integer decimal conversion, filters approximate results and reuses the scoped search/result workflow. Purchase and live Telnyx voice execution remain pending. TELNYX.md records this boundary. No Telnyx key configured or live request sent.
+
 2026-11-24 adds supervised startup through npm start. The optional RINGONYX_DELIVERY_WORKER_ENABLED=true starts a delivery-only worker alongside the web server with the same database and environment. Child exits stop the paired processes so Render can restart the service. The delivery-only worker does not run invoice scheduling, renewal or recording retention. Global dispatch remains independently controlled by RINGONYX_DELIVERY_ENABLED. Parser checks only; hosted operation awaits configuration.
 
 2026-11-24 adds native Resend email delivery through the existing email provider. The service credential selects Resend or SendGrid while existing connections retain SendGrid behavior. See RESEND.md for the private credential shape and deferred setup. No messages sent or provider configuration performed.

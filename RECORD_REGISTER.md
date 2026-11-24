@@ -1,5 +1,7 @@
 # Ringonyx record register
 
+2026-11-24 Telnyx inventory session adds US/Canada local/toll-free voice number search and provider price conversion. Carrier purchase and voice execution remain pending. Parser checks passed; no provider request or configuration performed. User separately confirmed Resend domain verification, saved encrypted email credentials, hosted delivery-worker startup and successful password-reset delivery and sign-in.
+
 2026-11-24 delivery-worker session adds start.mjs process supervision and changes npm start to use it. An opt-in delivery-only worker shares the web service disk and environment, forwards termination and stops the service on an unexpected child exit. Billing and retention maintenance remain separate. No hosted settings or credentials changed. JavaScript syntax checked; hosted execution and functional verification deferred.
 
 2026-11-24 Resend session adds native Resend request formatting for the existing registration, approval, password recovery and invoice email templates. Existing encrypted credentials, allowlist, paused dispatch and per-job idempotency headers are reused. Provider setup and live sending remain deferred. RESEND.md records the setup contract.
