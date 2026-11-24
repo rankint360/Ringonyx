@@ -60,7 +60,9 @@ export function nativeRequest(provider, endpoint, credentials, payload, context=
     return {url:url.href,...json({text:('Ringonyx '+payload.type+'\n'+JSON.stringify(payload.call || payload.lead || {reference:payload.id})).slice(0,3500)}),response:'text'};
   }
   if (provider === 'email') {
-    at('https://api.sendgrid.com');
+    const service = credentials.service || 'sendgrid';
+    if (!['sendgrid','resend'].includes(service)) throw Error('Choose SendGrid or Resend email service.');
+    at(service==='resend' ? 'https://api.resend.com' : 'https://api.sendgrid.com');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.recipient || '')) throw Error('Email job requires a recipient.');
     let text, subject;
     if (payload.type === 'password-reset') {
@@ -77,9 +79,11 @@ export function nativeRequest(provider, endpoint, credentials, payload, context=
       subject = payload.type === 'account-approved' ? 'Your Ringonyx account is approved' : 'Your Ringonyx registration is pending';
       text = subject+(payload.workspace ? '\nWorkspace '+payload.workspace : '');
     } else throw Error('Unsupported email template.');
-    const request = json({personalizations:[{to:[{email:payload.recipient}]}],from:{email:need('from')},subject,content:[{type:'text/plain',value:text}]});
+    const request = json(service==='resend'
+      ? {from:need('from'),to:[payload.recipient],subject,text}
+      : {personalizations:[{to:[{email:payload.recipient}]}],from:{email:need('from')},subject,content:[{type:'text/plain',value:text}]});
     request.headers.Authorization = 'Bearer '+need('apiKey');
-    return {url:'https://api.sendgrid.com/v3/mail/send',...request,response:'empty'};
+    return {url:service==='resend' ? 'https://api.resend.com/emails' : 'https://api.sendgrid.com/v3/mail/send',...request,response:'empty'};
   }
   if (provider === 'hubspot') {
     at('https://api.hubapi.com');

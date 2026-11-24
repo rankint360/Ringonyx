@@ -1,5 +1,7 @@
 # Ringonyx build status
 
+2026-11-24 adds native Resend email delivery through the existing email provider. The service credential selects Resend or SendGrid while existing connections retain SendGrid behavior. See RESEND.md for the private credential shape and deferred setup. No messages sent or provider configuration performed.
+
 2026-11-23 provider execution build adds native SendGrid email, Slack alerts, HubSpot lead upserts, JSON/form lead delivery, Twilio inventory and caller lookup, OpenAI transcription/analysis, and JSON/form buyer bids. Native result application is account scoped. Delivery batches run concurrently with lease fencing and bid timeouts. Visitor marketing context now includes page paths, UTMs and ad-click identifiers. Existing connections keep gateway mode. Configuration, regression execution and live verification are deferred. Remaining application work is explicitly listed in [BUILD_BACKLOG.md](BUILD_BACKLOG.md). All pending features are not yet complete.
 
 Application follow-up on 2026-11-23 adds Workspace tools for subscription trials and plan requests, wallet accounting and usage, carrier operation requests, durable delivery and encrypted credentials, invoice schedules and lifecycle, payout preparation, audio upload/playback/retention, reviewed charge adjustments, and routing policies with target editing and version restore. Public registration enters a platform approval queue. Password recovery queues a single-use reset email. Reports support custom dates, saved views, and column selection.
