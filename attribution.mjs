@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 export function attribution(db, { query, run, transaction, fail, phone }) {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS lease_marketing_context (
+      number TEXT PRIMARY KEY REFERENCES tracking_pool(number) ON DELETE CASCADE,
+      visitor TEXT NOT NULL, context TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS call_marketing_context (
+      call TEXT PRIMARY KEY REFERENCES calls(id), context TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS tracking_pool (
       number TEXT PRIMARY KEY, site TEXT NOT NULL REFERENCES sites(id)
     );
@@ -55,16 +62,26 @@ export function attribution(db, { query, run, transaction, fail, phone }) {
         run(`INSERT INTO number_leases VALUES (?, ?, ?, ?, ?) ON CONFLICT(number) DO UPDATE SET
           visitor=excluded.visitor, source=excluded.source, campaign=excluded.campaign, expires=excluded.expires`,
         available.number, visitor, clean(data.source) || 'Direct', clean(data.campaign), expires);
+        const context={};
+        for (const key of ['gclid','gbraid','wbraid','fbclid','medium','term','content']) {
+          if (typeof data[key]==='string' && data[key].length<=500) context[key]=data[key];
+        }
+        for (const key of ['page','referrer']) {
+          try { const url=new URL(data[key]); if (['http:','https:'].includes(url.protocol)) context[key]=url.origin+url.pathname.slice(0,1000); } catch {}
+        }
+        run('INSERT INTO lease_marketing_context VALUES (?,?,?) ON CONFLICT(number) DO UPDATE SET visitor=excluded.visitor,context=excluded.context',available.number,visitor,JSON.stringify(context));
         return { visitor, number: available.number, fallback: record.number, expires, dynamic: true };
       });
     },
     resolve(account, number) {
-      return query(`SELECT s.id, l.source, l.campaign FROM tracking_pool p JOIN sites s ON s.id=p.site
+      return query(`SELECT s.id, l.source, l.campaign, m.context AS marketing FROM tracking_pool p JOIN sites s ON s.id=p.site
         LEFT JOIN number_leases l ON l.number=p.number AND l.expires>?
+        LEFT JOIN lease_marketing_context m ON m.number=l.number AND m.visitor=l.visitor
         WHERE p.number=? AND s.account=?`, Date.now(), number, account)[0];
     },
     snapshot(call, number, match) {
       run('INSERT INTO call_attribution VALUES (?, ?, ?, ?)', call, number, match.source ?? 'Unattributed', match.campaign ?? '');
+      if (match.marketing) run('INSERT INTO call_marketing_context VALUES (?,?)',call,match.marketing);
     }
   };
 }

@@ -13,7 +13,10 @@
       method: 'POST',
       credentials: 'omit',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({ visitor, source: params.get('utm_source'), campaign: params.get('utm_campaign') })
+      body: JSON.stringify({ visitor, source: params.get('utm_source'), campaign: params.get('utm_campaign'),
+        medium:params.get('utm_medium'),term:params.get('utm_term'),content:params.get('utm_content'),
+        gclid:params.get('gclid'),gbraid:params.get('gbraid'),wbraid:params.get('wbraid'),fbclid:params.get('fbclid'),
+        page:location.origin+location.pathname,referrer:document.referrer })
     });
     if (!response.ok) return;
     const assignment = await response.json();

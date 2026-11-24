@@ -1,5 +1,7 @@
 # Ringonyx record register
 
+2026-11-23 native execution session implemented eight provider transports plus JSON/form bidder requests, native response application, concurrent bounded delivery batches, scoped transcription audio reads, and persisted marketing attribution. Added BUILD_BACKLOG.md to distinguish remaining application code from deferred configuration and verification. No provider credentials or connections were configured. JavaScript parser checks passed. Regression, visual and live provider verification were not run at the owner's request.
+
 | Session | Steps | Change | Verification |
 |---|---|---|---|
 | 2026-11-11 | 01–02 | Created the local Node.js application, SQLite schema, dashboard, and operator key. | API integration test exercises authenticated access. |

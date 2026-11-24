@@ -99,8 +99,8 @@ export async function renderTools({request,escape:e,money,session,form,field,sel
       [e(row.provider),e(row.endpoint),row.enabled?'Yes':'No',row.hasSecret?'Yes':'No'])))+
       (owner?'<div class="grid">'+
         form('Connection and saved credentials','workspace-tools/delivery/connection',
-          options('provider','Provider',state.providers)+field('endpoint','HTTPS endpoint','type="url"')+
-          '<label>Shared signing secret (leave blank to retain)<input name="secret" type="password" autocomplete="new-password"></label>'+
+          options('provider','Provider',state.providers)+options('mode','Transport',['gateway','native'])+field('endpoint','HTTPS endpoint','type="url"')+
+          '<label>Gateway signing secret or native credentials JSON (leave blank to retain)<input name="secret" type="password" autocomplete="new-password"></label>'+
           options('enabled','Enabled',['false','true']),'Save connection')+
         form('Queue an event','workspace-tools/delivery/enqueue',options('provider','Provider',state.providers)+field('reference','Idempotency reference')+
           '<label>JSON payload<textarea name="payload" required>{"type":"ringonyx.test"}</textarea></label>','Queue delivery')+

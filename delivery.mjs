@@ -1,8 +1,13 @@
 import { randomBytes, randomUUID, createCipheriv, createDecipheriv, createHmac } from 'node:crypto';
+import { nativeProviders, nativeRequest, nativeResult, readProviderJSON } from './native-providers.mjs';
 const providers = ['google-ads','meta','hubspot','salesforce','slack','transcription','caller-lookup','caller-profiles',
   'booking','email','payments','payouts','carrier','lead-delivery','webhook','ai','bidding'];
 export function delivery(db, { query, run, transaction, required, fail, now }, options = {}) {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS integration_modes (
+      account TEXT NOT NULL REFERENCES accounts(id), provider TEXT NOT NULL, mode TEXT NOT NULL,
+      PRIMARY KEY(account,provider)
+    );
     CREATE TABLE IF NOT EXISTS integration_connections (
       account TEXT NOT NULL REFERENCES accounts(id), provider TEXT NOT NULL, endpoint TEXT NOT NULL,
       enabled INTEGER NOT NULL, secret TEXT, updated TEXT NOT NULL, PRIMARY KEY(account,provider)
@@ -57,10 +62,11 @@ export function delivery(db, { query, run, transaction, required, fail, now }, o
     return { id,state:'queued' };
   }
   return {
-    providers, enqueue,
+    providers, enqueue, nativeProviders,
     read(account) {
-      return { providers,
-        connections: query('SELECT provider,endpoint,enabled,secret IS NOT NULL AS hasSecret,updated FROM integration_connections WHERE account=?',account),
+      return { providers, nativeProviders,
+        connections: query(`SELECT c.provider,c.endpoint,c.enabled,c.secret IS NOT NULL AS hasSecret,c.updated,COALESCE(m.mode,'gateway') AS mode
+          FROM integration_connections c LEFT JOIN integration_modes m ON m.account=c.account AND m.provider=c.provider WHERE c.account=?`,account),
         jobs: query('SELECT id,provider,reference,state,attempts,available,error,created FROM delivery_jobs WHERE account=? ORDER BY created DESC LIMIT 100',account),
         attempts: query(`SELECT a.* FROM delivery_attempts a JOIN delivery_jobs j ON j.id=a.job
           WHERE j.account=? ORDER BY a.id DESC LIMIT 100`,account) };
@@ -71,13 +77,23 @@ export function delivery(db, { query, run, transaction, required, fail, now }, o
       if (action === 'connection') {
         if (!providers.includes(data.provider) || typeof data.enabled !== 'boolean') fail('Choose a provider and enabled state.');
         const url = endpoint(required(data.endpoint,'endpoint'));
+        const mode = data.mode || 'gateway';
+        if (!['native','gateway'].includes(mode) || (mode==='native' && !nativeProviders.includes(data.provider))) fail('Choose a supported transport mode.');
         const prior = query('SELECT secret FROM integration_connections WHERE account=? AND provider=?',account,data.provider)[0];
         if (data.secret && (typeof data.secret!=='string' || data.secret.length>8000)) fail('Secret must be at most 8,000 characters.');
         const secret = data.clearSecret === true ? null : data.secret ? encrypt(data.secret) : prior?.secret ?? null;
+        if (mode==='native') {
+          let credentials;
+          try { credentials = JSON.parse(secret ? decrypt(secret) : '{}'); } catch { fail('Native credentials must be a JSON object.'); }
+          if (!credentials || Array.isArray(credentials) || typeof credentials!=='object') fail('Native credentials must be a JSON object.');
+        }
+        return transaction(()=>{
         run(`INSERT INTO integration_connections VALUES (?,?,?,?,?,?) ON CONFLICT(account,provider)
           DO UPDATE SET endpoint=excluded.endpoint,enabled=excluded.enabled,secret=excluded.secret,updated=excluded.updated`,
           account,data.provider,url,Number(data.enabled),secret,now());
+        run('INSERT INTO integration_modes VALUES (?,?,?) ON CONFLICT(account,provider) DO UPDATE SET mode=excluded.mode',account,data.provider,mode);
         return { saved:true };
+        });
       }
       if (action === 'test') return enqueue(account,data.provider,'test:'+randomUUID(),{type:'ringonyx.test',created:now()});
       if (action === 'enqueue') {
@@ -118,9 +134,10 @@ export function delivery(db, { query, run, transaction, required, fail, now }, o
         return rows;
       });
       let sent = 0;
-      for (const job of jobs) {
+      await Promise.all(jobs.map(async job => {
         let status = null;
         let error = null;
+        let result = null;
         try {
           if (job.provider==='bidding') {
             const deadline=JSON.parse(job.payload).deadline;
@@ -132,18 +149,29 @@ export function delivery(db, { query, run, transaction, required, fail, now }, o
           if (!allowed.includes(url.hostname)) throw Error('Endpoint host is not in the server delivery allowlist.');
           const timestamp = String(Math.floor(Date.parse(now())/1000));
           const headers = { 'Content-Type':'application/json','Idempotency-Key':job.id,'X-Ringonyx-Timestamp':timestamp };
-          if (connection.secret) headers['X-Ringonyx-Signature'] = createHmac('sha256',decrypt(connection.secret))
+          const mode = query('SELECT mode FROM integration_modes WHERE account=? AND provider=?',job.account,job.provider)[0]?.mode || 'gateway';
+          if (connection.secret && mode==='gateway') headers['X-Ringonyx-Signature'] = createHmac('sha256',decrypt(connection.secret))
             .update(timestamp+'.'+job.payload).digest('hex');
-          const response = await (options.fetch || fetch)(url.href,{
-            method:'POST',headers,body:job.payload,redirect:'error',signal:AbortSignal.timeout(10000)
+          const payload=JSON.parse(job.payload);
+          const credentials=mode==='native' ? JSON.parse(connection.secret ? decrypt(connection.secret) : '{}') : null;
+          const request=mode==='native' ? nativeRequest(job.provider,url.href,credentials,payload,{recording:id=>options.recording?.(job.account,id)}) : {url:url.href,method:'POST',headers,body:job.payload};
+          if (!allowed.includes(new URL(request.url).hostname)) throw Error('Native API host is not in the server delivery allowlist.');
+          const response = await (options.fetch || fetch)(request.url,{
+            method:request.method,headers:{...request.headers,'Idempotency-Key':job.id},body:request.body,redirect:'error',signal:AbortSignal.timeout(job.provider==='bidding' ? Math.max(1,Math.min(10000,Date.parse(payload.deadline)-Date.parse(now()))) : 60000)
           });
           status = response.status;
-          await response.body?.cancel();
-          if (!response.ok) throw Error('HTTP '+status);
+          if (!response.ok) {await response.body?.cancel();throw Error('HTTP '+status);}
+          if (mode==='native' && request.response==='json') {
+            result=nativeResult(request,await readProviderJSON(response),payload,credentials);
+          } else await response.body?.cancel();
         } catch (failure) { error = String(failure.message).slice(0,300); }
         const applied=transaction(() => {
           if (!query("SELECT j.id FROM delivery_jobs j JOIN delivery_leases l ON l.job=j.id WHERE j.id=? AND j.state='sending' AND l.owner=?",
             job.id,job.owner).length) return;
+          if (!error && result) {
+            try { transaction(()=>options.onResult?.(result,job.account)); }
+            catch {error='Provider result could not be applied.';}
+          }
           run('INSERT INTO delivery_attempts (job,status,error,created) VALUES (?,?,?,?)',job.id,status,error,now());
           const attempts = job.attempts+1;
           const state = error ? (attempts>=5 ? 'failed':'queued'):'delivered';
@@ -153,7 +181,7 @@ export function delivery(db, { query, run, transaction, required, fail, now }, o
           return true;
         });
         if (applied && !error) sent++;
-      }
+      }));
       return {sent,processed:jobs.length};
     }
   };

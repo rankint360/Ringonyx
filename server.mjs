@@ -292,6 +292,10 @@ const handleVoice = voiceHandler({
 const invoices = billing({ query, run, transaction, id: randomUUID, now, fail });
 const exchange = network(db, { query, run, transaction, fail, required, whole, phone, now });
 function queueEvent(account,event) {
+  if (event.call?.id) {
+    const context=query('SELECT context FROM call_marketing_context WHERE call=?',event.call.id)[0];
+    if (context) event={...event,attribution:JSON.parse(context.context)};
+  }
   const targets=event.type==='lead.delivered' ? ['webhook','lead-delivery','hubspot','salesforce','slack'] :
     event.type==='lead.captured' ? ['webhook','hubspot','salesforce'] : ['webhook','google-ads','meta','hubspot','salesforce','slack'];
   for (const connection of query('SELECT provider FROM integration_connections WHERE account=? AND enabled=1',account)) {
@@ -313,7 +317,11 @@ const ops = operations(db, { query, run, transaction, required, fail, now, addSi
   campaigns: account => insights.report(account).campaigns });
 const manager = management(db, { query, run, transaction, required, fail, now });
 const shop = commerce(db, { query, run, transaction, required, whole, fail, now });
-const deliveries = delivery(db, { query, run, transaction, required, fail, now });
+const deliveries = delivery(db, { query, run, transaction, required, fail, now },{onResult(result,account) {
+  const table=result.type==='carrier'?'carrier_requests':result.type==='bid'?'auctions':'intelligence_requests';
+  if (!query('SELECT id FROM '+table+' WHERE id=? AND account=?',result.request,account).length) fail('Unknown provider request.',404);
+  return result.type==='carrier'?numbers.event(result):result.type==='bid'?bidAuctions.event(result):intelligenceJobs.event(result);
+},recording:(account,id)=>life.recording(account,id)});
 const resets = recovery(db, { query, run, transaction, required, fail, now, deliveries });
 const signup = registration(db, {query,run,transaction,required,fail,now,deliveries});
 const policies = routingPolicies(db, { query, run, required, whole, fail });
