@@ -340,13 +340,14 @@ if (process.argv[2] === '--maintenance') {
   db.close();
   process.exit(0);
 }
-if (process.argv[2] === '--worker') {
+if (['--worker','--delivery-worker'].includes(process.argv[2])) {
+  const deliveryOnly=process.argv[2]==='--delivery-worker';
   let running=true,lastMaintenance=0;
   process.on('SIGTERM',()=>{running=false;});
   process.on('SIGINT',()=>{running=false;});
-  console.log('Ringonyx job worker ready.');
+  console.log(deliveryOnly ? 'Ringonyx delivery worker ready.' : 'Ringonyx job worker ready.');
   while (running) {
-    const accounts=query('SELECT id FROM accounts');
+    const accounts=deliveryOnly ? [] : query('SELECT id FROM accounts');
     for (const account of accounts) bidAuctions.expire(account.id);
     if (Date.now()-lastMaintenance>=60000) {
       for (const account of accounts) {

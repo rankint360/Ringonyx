@@ -1,5 +1,7 @@
 # Resend email transport
 
+For the existing Render service with its disk, keep Start Command as `npm start`. Set `RINGONYX_DELIVERY_WORKER_ENABLED=true` to opt into the supervised delivery-only worker. This shares RINGONYX_DB and other environment settings with the web server. Keep `RINGONYX_DELIVERY_ENABLED=false` while reviewing configuration. Actual dispatch requires that separate switch to be true. This worker dispatches all queued provider jobs with enabled connections and allowed hosts; it is not limited to email. Invoice schedules, subscription renewals and recording retention still require the existing full worker or maintenance command. Do not run a second delivery worker against a separate database copy.
+
 Implemented 2026-11-24. No credentials configured or outbound messages sent during implementation.
 
 Use the existing `email` provider with transport `native` and endpoint `https://api.resend.com/emails`. Encrypted credentials use this shape, with real values entered privately in the application.
