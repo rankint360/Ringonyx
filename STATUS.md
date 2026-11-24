@@ -6,7 +6,9 @@ The same build adds timed buyer auctions with rechecked eligibility and winning-
 
 Existing workspaces retain legacy access until an owner opts into a managed plan. Draft plan prices of $19 and $69 follow the supplied screenshots and require commercial confirmation before payment activation. Payment and carrier requests await signed adapter events. Native provider adapters, OAuth, live WebRTC/voice/AI execution, configuration, visual acceptance, and end-to-end provider testing remain deferred. The generic HTTPS outbox is implemented, with dispatch disabled by default.
 
-Platform admin console manages workspace approval, user access, provider connection metadata and encrypted credentials, and the Twilio inbound voice switch. Admin routes require both the designated owner account and the configured admin hostname. Custom-domain DNS and certificate completion have not been confirmed.
+Platform admin console manages workspace approval, user access, provider connection metadata and encrypted credentials, and the Twilio inbound voice switch. Admin routes require both the designated owner account and the configured admin hostname.
+
+On 2026-11-23 the user confirmed Render domain verification and certificates for ringonyx.com, www.ringonyx.com, app.ringonyx.com, and admin.ringonyx.com. The user reached Platform administration through the admin domain, signed into the customer dashboard through app.ringonyx.com, saw the marketing homepage at ringonyx.com, and confirmed the www redirect to the root. The user also confirmed that the admin path tested outside the admin hostname returned an Unknown endpoint error. These are user-reported browser checks.
 
 Update this file after each feature. Record changes and verification in [RECORD_REGISTER.md](RECORD_REGISTER.md).
 

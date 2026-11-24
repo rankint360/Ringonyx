@@ -100,4 +100,6 @@
 
 | 2026-11-23 | Provider result contracts | Added timed buyer auctions, stored bid responses and awards, conversation and caller-data requests/results, booking confirmations, and a continuous job worker. | Ten automated tests passed with additional assertions for returned-bid settlement, result replay, booking deduplication, and transcript alerts. No provider configured or live acceptance performed. |
 
+| 2026-11-23 | 53–54 | Recorded custom-domain DNS, HTTPS, and hostname checks completed by the user. | User confirmed certificates for all four hostnames, admin and customer access on their respective domains, the public homepage, www-to-root redirect, and rejection of the admin path outside the admin hostname. Live telephony acceptance remains pending. |
+
 For subsequent sessions, append the date, STATUS.md step numbers, change, and verification result.
