@@ -1,5 +1,6 @@
 import { accountAccess, initializeAccounts, provision } from './accounts.mjs';
 import { management } from './management.mjs';
+import { hostRouting } from './host-routing.mjs';
 import { commerce } from './commerce.mjs';
 import { delivery } from './delivery.mjs';
 import { lifecycle } from './lifecycle.mjs';
@@ -412,6 +413,10 @@ const assets = {
   '/app.js': ['app.js', 'text/javascript'],
   '/style.css': ['style.css', 'text/css']
 };
+const routeHost=hostRouting({enabled:production,
+  publicHost:process.env.RINGONYX_PUBLIC_HOST || 'ringonyx.com',
+  appHost:process.env.RINGONYX_APP_HOST || 'app.ringonyx.com',
+  customerPages:new Set(Object.entries(assets).filter(([path,[file]])=>file==='index.html' && path!=='/admin').map(([path])=>path))});
 const server = createServer(async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -429,6 +434,12 @@ const server = createServer(async (req, res) => {
     }
     if (adminOrigin && pathname === '/') {
       res.writeHead(302, { Location: '/admin' });
+      return res.end();
+    }
+    const hostAction=routeHost(req.headers.host,req.method,req.url);
+    if (hostAction) {
+      if (!hostAction.location) fail('Unknown endpoint',hostAction.status);
+      res.writeHead(hostAction.status,{Location:hostAction.location});
       return res.end();
     }
     if (req.method === 'POST' && ['/webhooks/ringonyx/payment','/webhooks/ringonyx/events'].includes(pathname)) {

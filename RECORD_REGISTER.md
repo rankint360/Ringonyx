@@ -1,5 +1,9 @@
 # Ringonyx record register
 
+Hostname fix validation follow-up: npm test passed all 12 tests. No hosted DNS or environment settings changed.
+
+2026-11-24 hostname separation session fixes customer pages being served on both the public and app domains. Added server-side public-to-app redirects preserving query strings, public-domain customer API rejection, app-root routing and canonical www handling. Marketing and documented public integration endpoints remain available. Two focused tests cover host boundaries, methods, query preservation, local behavior and redirect destination validation. Server parser check passed. Hosted verification pending. Telnyx HTTP 401 diagnosis remains pending separately.
+
 2026-11-24 Telnyx inventory session adds US/Canada local/toll-free voice number search and provider price conversion. Carrier purchase and voice execution remain pending. Parser checks passed; no provider request or configuration performed. User separately confirmed Resend domain verification, saved encrypted email credentials, hosted delivery-worker startup and successful password-reset delivery and sign-in.
 
 2026-11-24 delivery-worker session adds start.mjs process supervision and changes npm start to use it. An opt-in delivery-only worker shares the web service disk and environment, forwards termination and stops the service on an unexpected child exit. Billing and retention maintenance remain separate. No hosted settings or credentials changed. JavaScript syntax checked; hosted execution and functional verification deferred.
